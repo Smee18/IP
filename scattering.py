@@ -1,6 +1,6 @@
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.svm import LinearSVR, SVR
+from sklearn.svm import LinearSVR
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from joblib import dump
@@ -11,17 +11,9 @@ import os
 from sklearn.model_selection import GridSearchCV
 import h5py
 from sklearn.metrics import mean_absolute_error, r2_score
+from tqdm import tqdm
 
 file_path = "HST_256x256_halfstellar32.hdf5"
-
-with h5py.File(file_path, 'r') as hf:
-    X_raw = hf["X"][:]
-    Y_ratio = hf["Y_ratio"][:]
-    #Y_time = hf["Y_time"][:]
-
-print("Applying Log-1p scaling to inputs...")
-X = np.log1p(X_raw)
-
 
 M_input = 256
 J = 5
@@ -45,19 +37,11 @@ print(f"Cropped X shape: {X_cropped.shape}")
 X_cropped = X_cropped.astype('float32') / 255.0 
 '''
 
-X_train, X_test, Y_train, Y_test = train_test_split(
-    X, Y_ratio, test_size=0.25, random_state=42
-)
 
 def get_scattering_maps(data):
      
     coeff_maps = []
-    total_images = data.shape[0]
-    print(f"{total_images} to treat")
-    for i, image in enumerate(data):
-
-        if i % 500 == 0:
-            print(f"{i} images treated")
+    for image in data:
         coeff_map_image = []
         for channel in image:
 
@@ -131,45 +115,55 @@ def get_scattering_maps(data):
 
         coeff_maps.append(coeff_map_image)
     coeff_maps_arr = np.array(coeff_maps)
-    print(f"Output Maps: {coeff_maps_arr.shape}")
+    #print(f"Output Maps: {coeff_maps_arr.shape}")
+    coeff_maps_arr.reshape(coeff_maps_arr.shape[0], -1)
     return coeff_maps_arr
 
 
-if os.path.exists(f"255scattering_features_J{J}_L{L}.npz"):
-    print("Using saved maps")
-    data = np.load(f"255scattering_features_J{J}_L{L}.npz")
+with h5py.File(file_path, 'r') as hf:
+
+    X_raw = hf["X"]
+    Y_ratio = hf["Y_ratio"][:]
     
-    Sx_train = data['Sx_train']
-    Sx_test = data['Sx_test']
-    Y_train = data['Y_train']
-    Y_test = data['Y_test']
+    indices = np.arange(len(Y_ratio))
+    idx_train, idx_test, Y_train, Y_test = train_test_split(indices, Y_ratio, test_size=0.25, random_state=42)
 
-else:
-
-    print("Computing Scattering Transform")
-    Sx_train = get_scattering_maps(X_train)
-    Sx_test = get_scattering_maps(X_test)
-
-    print("Saving features to disk...")
+    # Check for saved file
     output_filename = f"255scattering_features_J{J}_L{L}.npz"
+    
+    if os.path.exists(output_filename):
+        print("Loading saved features...")
+        data = np.load(output_filename)
+        Sx_train = data['Sx_train']
+        Sx_test = data['Sx_test']
+    else:
+        # --- TRAINING SET ---
+        print("Processing Training Set...")
+        Sx_train_list = []
+        for i in tqdm(idx_train):
+            img = X_raw[i] 
+            img = np.log1p(img)[np.newaxis, ...] 
+            feats = get_scattering_maps(img)
+            Sx_train_list.append(feats.reshape(-1))
+            
+        Sx_train = np.array(Sx_train_list) 
 
-    np.savez_compressed(
-        output_filename, 
-        Sx_train=Sx_train, 
-        Sx_test=Sx_test,
-        Y_train=Y_train, 
-        Y_test=Y_test
-    )
-    print(f"Saved to {output_filename}")
+        # --- TEST SET ---
+        print("Processing Test Set...")
+        Sx_test_list = []
+        for i in tqdm(idx_test):
+            img = X_raw[i]
+            img = np.log1p(img)[np.newaxis, ...]
+            feats = get_scattering_maps(img)
+            Sx_test_list.append(feats.reshape(-1))
+            
+        Sx_test = np.array(Sx_test_list)
 
-Sx_train_flat = Sx_train.reshape(Sx_train.shape[0], -1)
-Sx_test_flat = Sx_test.reshape(Sx_test.shape[0], -1)
+        # Save
+        np.savez_compressed(output_filename, Sx_train=Sx_train, Sx_test=Sx_test, Y_train=Y_train, Y_test=Y_test)
+        print("Saved features.")
 
-eps = 1e-6 # Tiny number to prevent log(0)
-Sx_train_log = np.log(Sx_train_flat + eps)
-Sx_test_log = np.log(Sx_test_flat + eps)
-
-print(f"Training Final Shape: {Sx_train_log.shape}")
+print(f"Feature Shape: {Sx_train.shape}")
 
 pipeline = Pipeline([
     ('scaler', StandardScaler()),
@@ -183,12 +177,12 @@ param_grid = {
 
 print("Starting Grid Search...")
 grid = GridSearchCV(pipeline, param_grid, cv=3, verbose=2, n_jobs=None)
-grid.fit(Sx_train_log, Y_train)
+grid.fit(Sx_train, Y_train)
 
 print(f"Best Accuracy: {grid.best_score_}")
 print(f"Best Params: {grid.best_params_}")
 
-preds = grid.predict(Sx_test_log)
+preds = grid.predict(Sx_test)
 
 mae = mean_absolute_error(Y_test, preds)
 r2 = r2_score(Y_test, preds)
