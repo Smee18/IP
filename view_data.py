@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import cv2
 
+'''
 data = np.load("preprocessed-galaxy-classification-36x36.npz")
 X = data['X']
 Y_ratio = data['Y_ratio']
@@ -57,5 +58,47 @@ plt.subplot(2, 3, 6)  # 2 rows, 2 columns, third position
 plt.imshow(final_image) 
 plt.axis('off')  # Hide the axis labels
 plt.title(r"1% saturated")  
+
+plt.show()
+'''
+
+import h5py
+import matplotlib.pyplot as plt
+import numpy as np
+
+file_path = "HST_256x256_halfstellar32.hdf5"
+
+with h5py.File(file_path, 'r') as hf:
+    Y_time = hf["Y_time"][:]
+    Y_ratio = hf["Y_ratio"][:]
+
+fig = plt.figure(figsize=(10, 7))
+ax = fig.add_subplot(projection='3d')
+
+hist, xedges, yedges = np.histogram2d(Y_ratio, Y_time, bins=50)
+
+x_width = (xedges[1] - xedges[0])
+y_width = (yedges[1] - yedges[0])
+
+xpos, ypos = np.meshgrid(xedges[:-1] + x_width/2, yedges[:-1] + y_width/2, indexing="ij")
+xpos = xpos.ravel()
+ypos = ypos.ravel()
+zpos = np.zeros_like(xpos)
+
+# Dimensions of bars
+dx = x_width * 0.9 * np.ones_like(zpos) # 0.9 makes gaps between bars
+dy = y_width * 0.9 * np.ones_like(zpos)
+dz = hist.ravel()
+
+# Color by height (optional, makes it easier to see)
+cm = plt.get_cmap('plasma')
+col = [cm(h/dz.max()) for h in dz]
+
+ax.bar3d(xpos, ypos, zpos, dx, dy, dz, color=col, zsort='average')
+
+ax.set_xlabel('Log Mass Ratio')
+ax.set_ylabel('Time Since Merger')
+ax.set_zlabel('Count')
+ax.set_title(f'3D Histogram')
 
 plt.show()
