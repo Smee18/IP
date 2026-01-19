@@ -20,25 +20,6 @@ from sklearn.ensemble import RandomForestClassifier
 from imblearn.ensemble import BalancedRandomForestClassifier
 from sklearn.feature_selection import SelectFromModel
 
-file_path = "HST_256x256_halfstellar32.hdf5"
-
-M_input = 256
-J = 6
-L = 8
-downscale_factor = 2**J
-
-spatial_side = M_input // downscale_factor
-n_pixels = spatial_side ** 2
-
-n_order0 = 1
-n_order1 = J
-n_order2 = (J * (J - 1) // 2) * L 
-n_maps_per_channel = n_order0 + n_order1 + n_order2
-
-n_features = n_maps_per_channel * n_pixels * 3
-
-filters_set = filter_bank(M_input, M_input, J, L=L)
-
 '''
 data = np.load("preprocessed-galaxy-classification-36x36.npz")
 X = data['X']           
@@ -54,53 +35,75 @@ print(f"Cropped X shape: {X_cropped.shape}")
 X_cropped = X_cropped.astype('float32') / 255.0 
 '''
 
+def get_1d_wavelets(L, k_scale = 1, sigma_scale=0.8):
+
+    psi_freq_list = []
+    for k in range(k_scale):
+
+        qs = np.fft.fftfreq(L) * L 
+        xi = 2.5 / (2**k)   
+        sigma = sigma_scale * (2**k)
+        gaussian_peak = np.exp(- (qs - xi)**2 / (2 * sigma**2))
+        gaussian_correction = np.exp(- (qs**2) / (2 * sigma**2)) 
+        kappa = np.exp(- 0.5 * xi**2 / sigma**2)
+        
+        psi_freq = gaussian_peak - kappa * gaussian_correction
+        psi_freq /= np.max(np.abs(psi_freq))
+        psi_freq_list.append(psi_freq)
+    
+    return psi_freq_list
+
 
 def get_scattering_maps(image):
      
-    coeff_maps_list = []
+    coeff_maps_list = [] # Stores the flatenned coefficient maps for an image with three channels
 
-    freq_channel = np.fft.fft2(image)
+    freq_channel = np.fft.fft2(image) # Convert to fourier space
 
     # Order 0 map
-    low_pass_gaussian = filters_set['phi']["levels"][0][np.newaxis, ...]
-    conv_0_freq = freq_channel * low_pass_gaussian
-    conv_0_spatial = ifft2(conv_0_freq)
-    s0 = np.real(conv_0_spatial)
-    s0_down = s0[:, ::downscale_factor, ::downscale_factor]
-    coeff_maps_list.append(s0_down.reshape(-1))
+    low_pass_gaussian = filters_set['phi']["levels"][0][np.newaxis, ...] # Get low pass filter for each channel
+    conv_0_freq = freq_channel * low_pass_gaussian                       # Convolve
+    conv_0_spatial = ifft2(conv_0_freq)                                  # Convert back to spatial domain
+    s0 = np.abs(conv_0_spatial)                                          # Take the modulus
+    s0_down = s0[:, ::downscale_factor, ::downscale_factor]              # Downscale
+    coeff_maps_list.append(s0_down.reshape(-1))                          # Flatten and add to list
 
     # Order 1 maps
     order1_cubes = []
     cube_stack = []
-    psi_filters = filters_set['psi']
+    psi_filters = filters_set['psi'] # Get Morlet wavelets by scale
+    u1_sum_spatial = 0
     
     for f_dict in psi_filters:
         j = f_dict['j']
         theta = f_dict['theta']
-        f_freq = f_dict['levels'][0] [np.newaxis, ...]
+        f_freq = f_dict['levels'][0] [np.newaxis, ...] # Extract relevant wavelet angles
 
-        convolution = freq_channel * f_freq
-        conv_spatial = ifft2(convolution)
-        cube_stack.append(conv_spatial)
+        conv_freq = freq_channel * f_freq                       # Convole with wavelet
+        conv_spatial = np.fft.ifft2(conv_freq)                  # Convert to spatial to apply Non-Linearity
+        u1_spatial = np.abs(conv_spatial)                       # Take the modulus
+        u1_sum_spatial = u1_sum_spatial + u1_spatial            # Add to sum
+        u1_freq = np.fft.fft2(u1_spatial)                       # Convert back to fourier space
+        cube_stack.append(u1_freq)                              # Add layer to cube
 
-        if theta == (L - 1):
+        if theta == (L - 1): # When cube full
+
+            u1_sum_freq = np.fft.fft2(u1_sum_spatial)               # FFT the sum of modulus
+            s1_freq = u1_sum_freq * low_pass_gaussian               # Smooth with low pass filter
+            s1 = np.real(np.fft.ifft2(s1_freq))                     # Convert back to spatial domain
+            s1_down = s1[:, ::downscale_factor, ::downscale_factor] # Downscale
+            coeff_maps_list.append(s1_down.reshape(-1))             # Flatten and add to list
         
-            cube_arr = np.stack(cube_stack)
-            
-            order1_cubes.append({'j': j, 'cube': cube_arr})
-
-            cube_modulus = np.abs(cube_arr)
-            s1_invariant = np.sum(cube_modulus, axis=0)
-            s1_down = s1_invariant[:, ::downscale_factor, ::downscale_factor]
-            coeff_maps_list.append(s1_down.reshape(-1))
-            
-            cube_stack = []
+            cube_arr = np.stack(cube_stack)                  # Convert cube to 3D
+            order1_cubes.append({'j': j, 'cube': cube_arr})  # Add to list
+            cube_stack = []                                  # Reset stack
+            u1_sum_spatial =  0                              # Reset sum
     
     # Order 2 maps
 
     for parent_dict in order1_cubes:
         parent_j = parent_dict['j']
-        parent_cube = parent_dict['cube'] # Shape: (8, 32, 32)
+        parent_cube = parent_dict['cube']
         
         unique_j2 = sorted(list(set(f['j'] for f in filters_set['psi'])))
         
@@ -109,23 +112,30 @@ def get_scattering_maps(image):
             
                 filters_at_j2 = [f['levels'][0][np.newaxis, ...] for f in filters_set['psi'] if f['j'] == j2]
                 
-                orbit_maps = np.zeros((L, 3, M_input, M_input))
+                temp_spatial_convolutions = [] # New cube
                 
-                for angle_idx in range(L):
+                for angle_idx in range(L): # Loop over angles
 
-                    freq_slice = np.fft.fft2(np.abs(parent_cube[angle_idx]))
-
-                    for filter_idx, filter in enumerate(filters_at_j2):
-                        conv_freq = freq_slice * filter
-                        conv_spatial = ifft2(conv_freq)
-                        s2_map = np.abs(conv_spatial)
-                        alpha = (filter_idx - angle_idx) % L
-                        orbit_maps[alpha] += s2_map
+                    freq_slice = parent_cube[angle_idx]               # Retrieve slice
+                    conv_2_freq = freq_slice * filters_at_j2[angle_idx] # Convole with matching angle wavelet
+                    temp_spatial_convolutions.append(conv_2_freq)       # Store in new cube
                 
-                for alpha in range(L):
-                    final_map = orbit_maps[alpha]
-                    final_down = final_map[:, ::downscale_factor, ::downscale_factor]
-                    coeff_maps_list.append(final_down.reshape(-1))
+                spatial_pass_cube = np.stack(temp_spatial_convolutions)            # Stack up
+                cube_spatial = np.fft.ifft2(spatial_pass_cube)                     # Back to spatial domain
+                cube_L_freq = np.fft.fft(cube_spatial, axis=0)                     # FFT along orientation Z axis
+
+                for wavelet1d in wavelets1d_list:
+                    convolved_L = cube_L_freq * wavelet1d[
+                        :, np.newaxis, np.newaxis, np.newaxis]                         # 1D convolution
+                    u2_complex = np.fft.ifft(convolved_L, axis=0)                      # Back to spatial for orientation
+                    u2 = np.abs(u2_complex)                                            # Take the modulus
+                    u2_rotation_invariant = np.sum(u2, axis=0)                         # Sum over angular layers
+                    u2_freq_domain = np.fft.fft2(u2_rotation_invariant)                # FFT for low pass
+                    s2_freq = u2_freq_domain * low_pass_gaussian                       # Convolve with low pass filter
+                    s2 = np.real(np.fft.ifft2(s2_freq))                                # Back to spatial domain
+                    s2_down = s2[:, ::downscale_factor, ::downscale_factor]            # Downscale
+                    coeff_maps_list.append(s2_down.reshape(-1))                        # Flatten and add to list
+
 
 
     return np.concatenate(coeff_maps_list)
@@ -153,6 +163,27 @@ def create_labels(y_ratio, y_time):
     for i in range(0, 2):
         print(f"{len([x for x in labels if x == i])} in class {i}")    
     return labels, ["Recent Merger", "Old Merger"]
+
+file_path = "HST_256x256_halfstellar32.hdf5"
+
+M_input = 256
+J = 4 # Number of scales
+L = 8 # Number of angles
+K = 2 # Number of 1d scales
+downscale_factor = 2**J
+
+spatial_side = M_input // downscale_factor
+n_pixels = spatial_side ** 2
+
+n_order0 = 1 # Low pass filter
+n_order1 = J # Each scale and angle pair
+n_order2 = (J * (J - 1) // 2) * K # J2 > J1
+n_maps_per_channel = n_order0 + n_order1 + n_order2
+
+n_features = n_maps_per_channel * n_pixels * 3
+
+filters_set = filter_bank(M_input, M_input, J, L=L) # Creates the Morlet wavelets
+wavelets1d_list = get_1d_wavelets(L=L, k_scale = K)
 
 RATIO_CUTOFF = -0.6  # Boundary between Major and Minor
 TIME_CUTOFF = 2.0    # Boundary between Recent and Old
