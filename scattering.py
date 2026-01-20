@@ -19,21 +19,8 @@ from imblearn.over_sampling import RandomOverSampler
 from sklearn.ensemble import RandomForestClassifier
 from imblearn.ensemble import BalancedRandomForestClassifier
 from sklearn.feature_selection import SelectFromModel
+from scipy.stats import randint, uniform
 
-'''
-data = np.load("preprocessed-galaxy-classification-36x36.npz")
-X = data['X']           
-Y_is_merger = data['Y_is_merger']
-
-print(f"Original X shape: {X.shape}")
-
-margin = (M_input - M_crop) // 2
-X_cropped = X[:, :, margin:margin+M_crop, margin:margin+M_crop]
-
-print(f"Cropped X shape: {X_cropped.shape}") 
-
-X_cropped = X_cropped.astype('float32') / 255.0 
-'''
 
 def get_1d_wavelets(L, k_scale = 1, sigma_scale=0.8):
 
@@ -166,10 +153,12 @@ def create_labels(y_ratio, y_time):
 
 file_path = "HST_256x256_halfstellar32.hdf5"
 
-M_input = 256
-J = 4 # Number of scales
+M_input = 33
+M_crop = 32
+J = 2 # Number of scales
 L = 8 # Number of angles
 K = 2 # Number of 1d scales
+channel = 2 # Channel index
 downscale_factor = 2**J
 
 spatial_side = M_input // downscale_factor
@@ -180,14 +169,29 @@ n_order1 = J # Each scale and angle pair
 n_order2 = (J * (J - 1) // 2) * K # J2 > J1
 n_maps_per_channel = n_order0 + n_order1 + n_order2
 
-n_features = n_maps_per_channel * n_pixels * 3
+n_features = n_maps_per_channel * n_pixels
 
-filters_set = filter_bank(M_input, M_input, J, L=L) # Creates the Morlet wavelets
+filters_set = filter_bank(M_crop, M_crop, J, L=L) # Creates the Morlet wavelets
 wavelets1d_list = get_1d_wavelets(L=L, k_scale = K)
 
 RATIO_CUTOFF = -0.6  # Boundary between Major and Minor
 TIME_CUTOFF = 2.0    # Boundary between Recent and Old
 
+data = np.load("preprocessed-galaxy-classification-36x36.npz")
+X = data['X']   
+#X = X[:, np.newaxis, ...]
+Y_is_merger = data['Y_is_merger']
+
+print(f"Original X shape: {X.shape}")
+
+margin = (M_input - M_crop) // 2
+X_cropped = X[:, :, margin:margin+M_crop, margin:margin+M_crop]
+
+print(f"Cropped X shape: {X_cropped.shape}") 
+
+X_cropped = X_cropped.astype('float32') / 255.0 
+
+'''
 with h5py.File(file_path, 'r') as hf:
 
     X_raw = hf["X"]
@@ -198,75 +202,65 @@ with h5py.File(file_path, 'r') as hf:
     
     indices = np.arange(len(Y_classes))
     idx_train, idx_test, Y_train, Y_test = train_test_split(indices, Y_classes, test_size=0.25, random_state=42)
+'''
 
-    output_filename = f"255scattering_features_J{J}_L{L}.npz"
+X_train, X_test, Y_train, Y_test = train_test_split(X_cropped, Y_is_merger, test_size=0.20, random_state=42)
+output_filename = f"{M_crop}scattering_features_J{J}_L{L}.npz"
+
+if os.path.exists(output_filename):
+    print("Loading saved features...")
+    data = np.load(output_filename)
+    Sx_train = data['Sx_train']
+    Sx_test = data['Sx_test']
+else:
+    print("Processing Training Set...")
     
-    if os.path.exists(output_filename):
-        print("Loading saved features...")
-        data = np.load(output_filename)
-        Sx_train = data['Sx_train']
-        Sx_test = data['Sx_test']
-    else:
-        print("Processing Training Set...")
-        
-        Sx_train = np.zeros((len(idx_train), n_features), dtype=np.float32)
+    Sx_train = np.zeros((len(X_train), n_features), dtype=np.float32)
 
-        for row, img_idx in enumerate(tqdm(idx_train)):
-            img = X_raw[img_idx] 
-            feats = get_scattering_maps(img)
-            Sx_train[row] = feats
+    for row, img in enumerate(tqdm(X_train)):
+        feats = get_scattering_maps(img)
+        Sx_train[row] = feats
 
-        print("Processing Test Set...")
+    print("Processing Test Set...")
 
-        Sx_test = np.zeros((len(idx_test), n_features), dtype=np.float32)
+    Sx_test = np.zeros((len(X_test), n_features), dtype=np.float32)
 
-        for row, img_idx in enumerate(tqdm(idx_test)):    
-            img = X_raw[img_idx]
-            feats = get_scattering_maps(img)
-            Sx_test[row] = feats
+    for row, img in enumerate(tqdm(X_test)):    
+        feats = get_scattering_maps(img)
+        Sx_test[row] = feats
 
-        # Save
-        np.savez_compressed(output_filename, Sx_train=Sx_train, Sx_test=Sx_test, Y_train=Y_train, Y_test=Y_test)
-        print("Saved features.")
+    # Save
+    np.savez_compressed(output_filename, Sx_train=Sx_train, Sx_test=Sx_test, Y_train=Y_train, Y_test=Y_test)
+    print("Saved features.")
 
 Sx_train_log = np.log1p(Sx_train)
 Sx_test_log = np.log1p(Sx_test)
 
-'''
-selector = SelectFromModel(
-    BalancedRandomForestClassifier(n_estimators=100, random_state=42), 
-    threshold='median'
-)
-
-Sx_train_sel = selector.fit_transform(Sx_train_log, Y_train)
-Sx_test_sel = selector.transform(Sx_test_log)
-'''
-
 pipeline = Pipeline([
-    ('scaler', StandardScaler()),
-    #('pca', PCA(n_components=100)), 
-    ('rf', BalancedRandomForestClassifier(
-        n_estimators=200,       
-        sampling_strategy='all', 
-        replacement=True,     
+    ('rf', RandomForestClassifier( 
+        n_estimators = 300,
+        max_depth = None,
+        min_samples_leaf = 5,
         random_state=42))
 ], verbose=True)
 
-param_grid = {
 
-    'rf__min_samples_leaf': [2, 4, 8],
-    'rf__max_features': ['sqrt', 0.5, 'log2']
+param_grid = {
+    
+    'rf__min_samples_leaf': [5, 8, 10], 
+    'rf__max_features': ["sqrt", "log2"] 
+
 }
 
-print("Starting Grid Search...")
-grid = GridSearchCV(pipeline, param_grid, cv=3, verbose=2, scoring='balanced_accuracy')
+#print("Starting Grid Search...")
+#grid = GridSearchCV(pipeline, param_grid, cv=2, verbose=2, scoring='balanced_accuracy')
 
-grid.fit(Sx_train, Y_train)
+pipeline.fit(Sx_train, Y_train)
 
-print(f"Best Accuracy: {grid.best_score_}")
-print(f"Best Params: {grid.best_params_}")
+#print(f"Best Accuracy: {grid.best_score_}")
+#print(f"Best Params: {grid.best_params_}")
 
-preds = grid.predict(Sx_test)
+preds = pipeline.predict(Sx_test)
 
 '''
 mae = mean_absolute_error(Y_test, preds)
@@ -276,10 +270,10 @@ print(f"Test MAE: {mae:.4f}")
 print(f"Test RMSE: {rmse:.4f}")
 '''
 
-dump(grid, 'galaxy_regressor_model.joblib') 
+dump(pipeline, 'galaxy_rf_model.joblib') 
 print("Model saved")
 
-print(classification_report(Y_test, preds, target_names=names))
+print(classification_report(Y_test, preds, target_names=["Non Merger", "Merger"]))
 
 '''
 plt.figure(figsize=(6, 6))

@@ -6,7 +6,8 @@ from scipy.fft import fft2
 
 # FIX 1: Use a power of 2 for image size.
 # J=3 means we downsample by 2^3 = 8. M must be divisible by 8.
-M = 32 
+
+M = 32
 J = 2
 L = 8
 
