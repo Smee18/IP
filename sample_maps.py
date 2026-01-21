@@ -1,6 +1,6 @@
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.svm import LinearSVR
+from sklearn.svm import LinearSVC
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from joblib import dump
@@ -12,7 +12,6 @@ from sklearn.metrics import mean_absolute_error, root_mean_squared_error, classi
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from imblearn.under_sampling import RandomUnderSampler
-from sklearn.model_selection import GridSearchCV
 
 
 def get_1d_wavelets(L, k_scale = 1, sigma_scale=0.8):
@@ -21,8 +20,8 @@ def get_1d_wavelets(L, k_scale = 1, sigma_scale=0.8):
     for k in range(k_scale):
 
         qs = np.fft.fftfreq(L) * L 
-        xi = 2.5 * (2**-k)   
-        sigma = sigma_scale * (2**-k)
+        xi = 2.5 / (2**k)   
+        sigma = sigma_scale * (2**k)
         gaussian_peak = np.exp(- (qs - xi)**2 / (2 * sigma**2))
         gaussian_correction = np.exp(- (qs**2) / (2 * sigma**2)) 
         kappa = np.exp(- 0.5 * xi**2 / sigma**2)
@@ -73,7 +72,7 @@ def get_scattering_maps(image):
             s1 = np.real(np.fft.ifft2(s1_freq))                     # Convert back to spatial domain
             s1_down = s1[:, ::downscale_factor, ::downscale_factor] # Downscale
             coeff_maps_list.append(s1_down.reshape(-1))             # Flatten and add to list
-        
+
             cube_arr = np.stack(cube_stack)                  # Convert cube to 3D
             order1_cubes.append({'j': j, 'cube': cube_arr})  # Add to list
             cube_stack = []                                  # Reset stack
@@ -145,101 +144,6 @@ wavelets1d_list = get_1d_wavelets(L=L, k_scale = K)
 
 with h5py.File(file_path, 'r') as hf:
 
-    X_raw = hf["X"]
-    Y_time = hf["Y_time"][:]
-    Y_ratio = hf["Y_ratio"][:]
-
-    print(len(get_scattering_maps(X_raw[0])))
+    X_raw = hf["X"][1435]
     
-    indices = np.arange(len(Y_time))
-    idx_train, idx_test, Y_train, Y_test = train_test_split(indices, Y_time, test_size=0.20, random_state=42)
-
-    output_filename = f"maps/{M_input}scattering_features_J{J}_L{L}.npz"
-
-    if os.path.exists(output_filename):
-        print("Loading saved features...")
-        data = np.load(output_filename)
-        Sx_train = data['Sx_train']
-        Sx_test = data['Sx_test']
-        Y_train = data['Y_train']
-        Y_test =data['Y_test']
-    else:
-        print("Processing Training Set...")
-        
-        Sx_train = np.zeros((len(idx_train), n_features*3), dtype=np.float32)
-
-        for row, img in enumerate(tqdm(idx_train)):
-            feats = get_scattering_maps(X_raw[img])
-            Sx_train[row] = feats
-
-        print("Processing Test Set...")
-
-        Sx_test = np.zeros((len(idx_test), n_features*3), dtype=np.float32)
-
-        for row, img in enumerate(tqdm(idx_test)):    
-            feats = get_scattering_maps(X_raw[img])
-            Sx_test[row] = feats
-
-        # Save
-        np.savez_compressed(output_filename, Sx_train=Sx_train, Sx_test=Sx_test, Y_train=Y_train, Y_test=Y_test)
-        print("Saved features.")
-
-Sx_train_log = np.log1p(Sx_train)
-Sx_test_log = np.log1p(Sx_test)
-
-print(Sx_train.shape)
-
-pipeline = Pipeline([
-    ('scaler', StandardScaler()),
-    ('svr', LinearSVR( 
-        random_state=42,
-        max_iter=100000))
-], verbose=True)
-
-
-param_grid = {
-    
-    'svr__C': [0.01, 0.1, 1], 
-    'svr__loss': ['epsilon_insensitive', 'squared_epsilon_insensitive'] 
-
-}
-
-print("Starting Grid Search...")
-grid = GridSearchCV(pipeline, param_grid, cv=2, verbose=2, scoring='neg_mean_absolute_error')
-
-grid.fit(Sx_train_log, Y_train)
-
-print(f"Best Accuracy: {grid.best_score_}")
-print(f"Best Params: {grid.best_params_}")
-
-preds = grid.predict(Sx_test_log)
-
-
-mae = mean_absolute_error(Y_test, preds)
-rmse = root_mean_squared_error(Y_test, preds)
-
-print(f"Test MAE: {mae:.4f}")
-print(f"Test RMSE: {rmse:.4f}")
-
-
-dump(grid, 'galaxy_svr_model.joblib') 
-print("Model saved")
-
-#print(classification_report(Y_test, preds, target_names=["Non Merger", "Merger"]))
-
-
-plt.figure(figsize=(6, 6))
-plt.scatter(Y_test, preds, alpha=0.3, color='blue', label='Predictions')
-
-min_val = min(Y_test.min(), preds.min())
-max_val = max(Y_test.max(), preds.max())
-plt.plot([min_val, max_val], [min_val, max_val], 'r--', lw=2, label='Perfect Fit')
-
-plt.xlabel("True Log Mass Ratio (Ground Truth)")
-plt.ylabel("Predicted Log Mass Ratio")
-plt.legend()
-plt.grid(True, linestyle='--', alpha=0.5)
-
-plt.tight_layout()
-plt.show()
-
+maps = get_scattering_maps(X_raw)

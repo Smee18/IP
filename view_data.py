@@ -74,10 +74,10 @@ def make_rgb(img_data):
 file_path = r"data/HST_256x256_halfstellar32.hdf5"
 
 with h5py.File(file_path, 'r') as hf:
-    X = hf["X"][35]
+    X = hf["X"][1435]
     Y_time = hf["Y_time"][:]
     Y_ratio = hf["Y_ratio"][:]
-
+'''
 fig = plt.figure(figsize=(10, 7))
 ax = fig.add_subplot(projection='3d')
 
@@ -110,7 +110,7 @@ ax.set_zlabel('Count')
 ax.set_title(f'3D Histogram')
 
 plt.show()
-
+'''
 
 fig = plt.figure(figsize=(10, 7))
 
@@ -118,28 +118,23 @@ fig = plt.figure(figsize=(10, 7))
 plt.subplot(1, 4, 1)  # 2 rows, 2 columns, first position
 plt.imshow((X[0]), cmap='gray_r')  
 plt.axis('off')  # Hide the axis labels
-plt.title("B channel (Blue)") 
+plt.title("Projection 1") 
 
 # Add the second image to the figure (top-right position)
 plt.subplot(1, 4, 2)  # 2 rows, 2 columns, second position
 plt.imshow((X[1]), cmap='gray_r')  
 plt.axis('off')  # Hide the axis labels
-plt.title("I channel (Red)") 
+plt.title("Projection 2") 
 
 # Add the third image to the figure (bottom-left position)
 plt.subplot(1, 4, 3)  # 2 rows, 2 columns, third position
 plt.imshow((X[2]), cmap='gray_r') 
 plt.axis('off')  # Hide the axis labels
-plt.title("H Channel (Infrared)")  
-
-plt.subplot(1, 4, 4)  # 2 rows, 2 columns, third position
-plt.imshow((make_rgb(X)), cmap='gray_r') 
-plt.axis('off')  # Hide the axis labels
-plt.title("Merged")
+plt.title("Projection 3")  
 
 plt.show()
 
-
+'''
 N_SAMPLES = 64
 GRID_SIZE = 8 # 10x10 grid
 
@@ -169,4 +164,4 @@ for i in range(N_SAMPLES):
 
 plt.tight_layout()
 plt.subplots_adjust(top=0.95, wspace=0.05, hspace=0.05)
-plt.show()
+plt.show()'''
