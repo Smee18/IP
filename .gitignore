@@ -1,4 +1,3 @@
-HST_256x256_halfstellar32.hdf5
-preprocessed-galaxy-classification-36x36.npz
 *.npz
 *.joblib
+data/

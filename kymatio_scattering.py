@@ -1,8 +1,5 @@
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.svm import LinearSVR, LinearSVC
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
 from joblib import dump
 from kymatio.scattering2d.filter_bank import filter_bank
 from scipy.fft import ifft2
@@ -11,9 +8,11 @@ import h5py
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error, r2_score, classification_report
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-from imblearn.under_sampling import RandomUnderSampler
-from sklearn.model_selection import GridSearchCV
+import sklearn.cluster as cluster
 from sklearn.utils import shuffle
+import umap
+import umap.plot
+from sklearn.neighbors import NearestNeighbors
 
 
 def get_1d_wavelets(L, K=1):
@@ -178,7 +177,7 @@ filters_set = filter_bank(M_input, M_input, J, L=L) # Creates the Morlet wavelet
 wavelets1d_list = get_1d_wavelets(L=L, K = K)
 phi_ang_filter = get_angular_phi(L)
 
-output_filename = f"maps/{M_input}classification_scattering_features_J{J}_L{L}.npz"
+output_filename = f"maps/{M_input}random_scattering_features_J{J}_L{L}.npz"
 
 if os.path.exists(output_filename):
     print("Loading saved features...")
@@ -187,6 +186,8 @@ if os.path.exists(output_filename):
     Sx_test = data['Sx_test']
     Y_train_classes = data['Y_train_classes'] 
     Y_test_classes = data['Y_test_classes']
+    indices = data['all_indices']
+    idx_train = data['idx_train']
 
 else:
 
@@ -201,7 +202,7 @@ else:
         for time, ratio in zip(Y_time, Y_ratio): 
             
             # 1. Merger: Recent (0.5 Gyr) and Major (> 1:4 ratio)
-            if time < 0.5:
+            if time < 0.5 and 10 ** ratio > 0.25:
                 Y_classes_full.append(1) 
             
             # 2. Non-Merger: Old (> 2 Gyr) OR very minor (< 1:100 ratio)
@@ -223,16 +224,21 @@ else:
             random_subset = np.random.choice(indices, max_per_class, replace=False)
             selected_indices.extend(random_subset)
 
-        selected_indices = np.sort(selected_indices)
+        #selected_indices = np.sort(selected_indices)
+
+        selected_indices = np.sort(np.random.choice(np.arange(0, len(Y_time)), 200, replace=False))
 
         X_new = X_raw[selected_indices]
-        Y_classes_new = Y_classes_full[selected_indices]
+        #Y_classes_new = Y_classes_full[selected_indices]
 
-        indices = np.arange(len(Y_classes_new))
-        idx_train, idx_test = train_test_split(indices, test_size=0.20, random_state=42, stratify=Y_classes_new)
+        indices = np.arange(len(selected_indices))
+        idx_train, idx_test = train_test_split(indices, test_size=0.20, random_state=42)
 
-        Y_train_classes = np.repeat(Y_classes_new[idx_train], 3)
-        Y_test_classes = np.repeat(Y_classes_new[idx_test], 3)
+        #Y_train_classes = np.repeat(Y_classes_new[idx_train], 3)
+        #Y_test_classes = np.repeat(Y_classes_new[idx_test], 3)
+
+        Y_train_classes = []
+        Y_test_classes = []
 
         print("Processing Training Set...")
         
@@ -252,14 +258,14 @@ else:
                 feats = get_scattering_maps(projections)
                 Sx_test[row * 3 + i] = feats
 
-        Sx_train, Y_train_classes = shuffle(Sx_train, Y_train_classes, random_state=42)
-
         # Save
         np.savez_compressed(output_filename, 
                             Sx_train=Sx_train, 
                             Sx_test=Sx_test,
-                            Y_train_classes = Y_train_classes,
-                            Y_test_classes = Y_test_classes)
+                            Y_train_classes=Y_train_classes,
+                            Y_test_classes=Y_test_classes,
+                            all_indices=selected_indices,
+                            idx_train=idx_train)
         print("Saved features.")
 
 Sx_train_log = np.log1p(Sx_train)
@@ -267,77 +273,44 @@ Sx_test_log = np.log1p(Sx_test)
 
 print(Sx_train.shape)
 
-pipeline = Pipeline([
-    ('scaler', StandardScaler()),
-    ('svc', LinearSVC(
-        penalty='l1',             # L1 forces sparsity (feature selection)
-        loss='squared_hinge',
-        dual=False,               # specific setting required for L1 in LinearSVC
-        tol=1e-4,
-        C=0.05,                   # <--- CRITICAL: Lower C = Stronger Regularization. 
-                                  # Try 0.01, 0.05, 0.1. Small C prevents overfitting the 215 mergers.
-        class_weight='balanced',  # <--- CRITICAL: Handles the 16:1 imbalance automatically
-        random_state=42,
-        max_iter=50000
-    ))
-], verbose=True)
+kmeans = cluster.KMeans(n_clusters=2, random_state=42).fit(Sx_train_log)
+labels = kmeans.labels_    # Get the labels
+centroids = kmeans.cluster_centers_ # Get the centers (Shape: 2, n_features)
 
-param_grid = {
-    'svc__C': [0.1] 
-}
 
-print("Starting Grid Search...")
-grid = GridSearchCV(pipeline, param_grid, cv=5, verbose=2, scoring='f1_macro')
-grid.fit(Sx_train_log, Y_train_classes)
-
-print(f"Best Accuracy: {grid.best_score_}")
-print(f"Best Params: {grid.best_params_}")
-best_model = grid.best_estimator_
-
-preds = best_model.predict(Sx_test_log)
-
-'''
-mae = mean_absolute_error(Y_test_ratio, preds)
-rmse = root_mean_squared_error(Y_test_ratio, preds)
-r2 = r2_score(Y_test_ratio, preds)
-
-print(f"Test MAE: {mae:.4f}")
-print(f"Test RMSE: {rmse:.4f}")
-print(f"R2 Score: {r2:.4f}")
-'''
-
-preds_reshaped = preds.reshape(-1, 3)
-ground_truth_reshaped = Y_test_classes.reshape(-1, 3)
-
-# Majority Vote: sum the 3 predictions (0 or 1). If sum >= 2, it's a Merger (1).
-galaxy_preds_sum = preds_reshaped.sum(axis=1)
-galaxy_preds_final = (galaxy_preds_sum >= 2).astype(int)
-
-# Get the true label for the galaxy (taking the first one of the triplet is fine as they are all the same)
-galaxy_truth_final = ground_truth_reshaped[:, 0]
-
-print("\n=== Per-Image Performance ===")
-print(classification_report(Y_test_classes, preds, target_names=["Non-Merger", "Merger"]))
-
-print("\n=== Per-Galaxy Performance (Majority Voting) ===")
-print(classification_report(galaxy_truth_final, galaxy_preds_final, target_names=["Non-Merger", "Merger"]))
-
-dump(pipeline, 'galaxy_svr_model.joblib') 
-print("Model saved")
-
-'''
-plt.figure(figsize=(6, 6))
-plt.scatter(Y_test_ratio, preds, alpha=0.3, color='blue', label='Predictions')
-
-min_val = min(Y_test_ratio.min(), preds.min())
-max_val = max(Y_test_ratio.max(), preds.max())
-plt.plot([min_val, max_val], [min_val, max_val], 'r--', lw=2, label='Perfect Fit')
-
-plt.xlabel("True Log Mass Ratio (Ground Truth)")
-plt.ylabel("Predicted Log Mass Ratio")
-plt.legend()
-plt.grid(True, linestyle='--', alpha=0.5)
-
-plt.tight_layout()
+standard_embedding = umap.UMAP(random_state=42, n_jobs=1, min_dist=0.5, n_neighbors = 5).fit_transform(Sx_train_log)
+plt.scatter(standard_embedding[:, 0], standard_embedding[:, 1], c=labels, s=0.1, cmap='Spectral')
 plt.show()
-'''
+
+
+nbrs = NearestNeighbors(n_neighbors=8, algorithm='ball_tree').fit(Sx_train_log)
+
+for i, center in enumerate(centroids):
+    distances, neighbor_indices = nbrs.kneighbors([center])
+    
+    prototype_rows = neighbor_indices[0]
+    
+    print(f"\n=== Cluster {i} Prototypes (Indices: {prototype_rows}) ===")
+    
+    # Setup plot
+    fig, axes = plt.subplots(1, 8, figsize=(20, 3))
+    fig.suptitle(f'Cluster {i} Prototypes', fontsize=16)
+    
+    for ax_idx, row_idx in enumerate(prototype_rows):
+        
+        # 1. Calculate which galaxy in idx_train this row belongs to
+        train_list_index = row_idx // 3
+        projection_index = row_idx % 3
+        
+        # 2. Get the actual index in X_new
+        gal_id_in_new = idx_train[train_list_index]
+        
+        # 3. Retrieve Image
+        img = X_raw[gal_id_in_new][projection_index]
+        
+        # 4. Plot
+        axes[ax_idx].imshow(img, cmap='gray_r', origin='lower')
+        axes[ax_idx].axis('off')
+        axes[ax_idx].set_title(f"Row: {row_idx}\nProj: {projection_index}")
+        
+    plt.show()
