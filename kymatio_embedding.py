@@ -4,6 +4,7 @@ import h5py
 import scipy.special
 import math
 import numpy as np
+from tqdm import tqdm
 
 # 1. SciPy 1.15+ moved/removed these, but Kymatio's internal 3D code 
 # (which is imported by the 2D frontend) needs them.
@@ -38,7 +39,7 @@ def get_features_in_batches(hdf5_dataset, batch_size=32):
     n_coefficients = 681 
     features = np.zeros((n_samples, n_coefficients), dtype=np.float32)
     
-    for start in range(0, n_samples, batch_size):
+    for start in tqdm(range(0, n_samples, batch_size), desc="Extracting Kymatio Embeddings"):
         end = min(start + batch_size, n_samples)
         
         batch = hdf5_dataset[start:end].astype(np.float32)
@@ -51,10 +52,9 @@ def get_features_in_batches(hdf5_dataset, batch_size=32):
         S = model(batch_t)
         
         # Average Pool and move back to CPU/NumPy
-        features[start:end] = S.mean(dim=(2, 3)).cpu().numpy()
-
-        if start % 100 == 0:
-            print(f"Processed {start}/{n_samples}")
+        with torch.no_grad():  
+            S = model(batch_t)
+            features[start:end] = S.mean(dim=(2, 3)).cpu().numpy()
         
     return features
 
