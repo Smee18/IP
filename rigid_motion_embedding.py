@@ -1,19 +1,9 @@
 import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.svm import LinearSVR, LinearSVC
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
-from joblib import dump
 from kymatio.scattering2d.filter_bank import filter_bank
 from scipy.fft import ifft2
 import os 
 import h5py
-from sklearn.metrics import mean_absolute_error, root_mean_squared_error, r2_score, classification_report
 from tqdm import tqdm
-import matplotlib.pyplot as plt
-from imblearn.under_sampling import RandomUnderSampler
-from sklearn.model_selection import GridSearchCV
-from sklearn.utils import shuffle
 
 
 def get_1d_wavelets(L, K=1):
@@ -155,8 +145,25 @@ def get_scattering_maps(image):
 
     return final_maps
 
+def get_features_in_batches(hdf5_dataset, batch_size=32):
+    n_samples = hdf5_dataset.shape[0]
+    n_coefficients = n_features # Pre-calculated based on J, L, K
+    features = np.zeros((n_samples, n_coefficients), dtype=np.float32)
 
-file_path = r"data/HST_256x256_halfstellar32.hdf5"
+    for start in tqdm(range(0, n_samples, batch_size), desc="Extracting Rigid ScatNet"):
+        end = min(start + batch_size, n_samples)
+        
+        batch_rgb = hdf5_dataset[start:end].astype(np.float32)
+        
+        batch_gray = (0.299 * batch_rgb[..., 0] + 
+                      0.587 * batch_rgb[..., 1] + 
+                      0.114 * batch_rgb[..., 2]) / 255.0
+        
+        for i in range(end - start):
+            img_input = batch_gray[i][np.newaxis, ...] 
+            features[start + i] = get_scattering_maps(img_input)
+    
+    return features
 
 M_input = 256
 J = 5 # Number of scales
@@ -178,166 +185,21 @@ filters_set = filter_bank(M_input, M_input, J, L=L) # Creates the Morlet wavelet
 wavelets1d_list = get_1d_wavelets(L=L, K = K)
 phi_ang_filter = get_angular_phi(L)
 
-output_filename = f"maps/{M_input}classification_scattering_features_J{J}_L{L}.npz"
+output_filename = r"maps/rigid_motion_embedding_gray.npz"
+data_path = 'data/Galaxy10_DECals.h5'
 
 if os.path.exists(output_filename):
     print("Loading saved features...")
     data = np.load(output_filename)
-    Sx_train = data['Sx_train']
-    Sx_test = data['Sx_test']
-    Y_train_classes = data['Y_train_classes'] 
-    Y_test_classes = data['Y_test_classes']
-
+    rm_embeddings = data['rm_embeddings']
 else:
-
-    with h5py.File(file_path, 'r') as hf:
-
-        X_raw = hf["X"]
-        Y_time = hf["Y_time"][:]
-        Y_ratio = hf["Y_ratio"][:]
-
-        Y_classes_full = []
-
-        for time, ratio in zip(Y_time, Y_ratio): 
-            
-            # 1. Merger: Recent (0.5 Gyr) and Major (> 1:4 ratio)
-            if time < 0.5:
-                Y_classes_full.append(1) 
-            
-            # 2. Non-Merger: Old (> 2 Gyr) OR very minor (< 1:100 ratio)
-            if time >= 2 or 10 ** ratio <= 0.01:
-                Y_classes_full.append(0) 
-
-        Y_classes_full = np.array(Y_classes_full)
-
-        unique, counts = np.unique(Y_classes_full, return_counts=True)
-        print("Class Distribution:", dict(zip(unique, counts)))
+    print("Opening HDF5 file for lazy-loading...")
+    with h5py.File(data_path, 'r') as F:
+        # Pass the HDF5 dataset directly to the batch function
+        rm_embeddings = get_features_in_batches(F['images'], batch_size=16)
+    
+    # Save results
+    np.savez_compressed(output_filename, rm_embeddings=rm_embeddings)
+    print(f"Extraction Complete. Shape: {rm_embeddings.shape}")
 
 
-        selected_indices = []
-        max_per_class = np.min(counts)
-
-        for class_id in [0, 1]:
-            # Find indices where the class is class_id
-            indices = np.where(Y_classes_full == class_id)[0]
-            random_subset = np.random.choice(indices, max_per_class, replace=False)
-            selected_indices.extend(random_subset)
-
-        selected_indices = np.sort(selected_indices)
-
-        X_new = X_raw[selected_indices]
-        Y_classes_new = Y_classes_full[selected_indices]
-
-        indices = np.arange(len(Y_classes_new))
-        idx_train, idx_test = train_test_split(indices, test_size=0.20, random_state=42, stratify=Y_classes_new)
-
-        Y_train_classes = np.repeat(Y_classes_new[idx_train], 3)
-        Y_test_classes = np.repeat(Y_classes_new[idx_test], 3)
-
-        print("Processing Training Set...")
-        
-        Sx_train = np.zeros((len(idx_train)*3, n_features), dtype=np.float32)
-
-        for row, sample in enumerate(tqdm(idx_train)):
-            for i, projections in enumerate(X_new[sample]):
-                feats = get_scattering_maps(projections)
-                Sx_train[row * 3 + i] = feats
-
-        print("Processing Test Set...")
-
-        Sx_test = np.zeros((len(idx_test)*3, n_features), dtype=np.float32)
-
-        for row, sample in enumerate(tqdm(idx_test)):
-            for i, projections in enumerate(X_new[sample]):
-                feats = get_scattering_maps(projections)
-                Sx_test[row * 3 + i] = feats
-
-        Sx_train, Y_train_classes = shuffle(Sx_train, Y_train_classes, random_state=42)
-
-        # Save
-        np.savez_compressed(output_filename, 
-                            Sx_train=Sx_train, 
-                            Sx_test=Sx_test,
-                            Y_train_classes = Y_train_classes,
-                            Y_test_classes = Y_test_classes)
-        print("Saved features.")
-
-Sx_train_log = np.log1p(Sx_train)
-Sx_test_log = np.log1p(Sx_test)
-
-print(Sx_train.shape)
-
-pipeline = Pipeline([
-    ('scaler', StandardScaler()),
-    ('svc', LinearSVC(
-        penalty='l1',             # L1 forces sparsity (feature selection)
-        loss='squared_hinge',
-        dual=False,               # specific setting required for L1 in LinearSVC
-        tol=1e-4,
-        C=0.05,                   # <--- CRITICAL: Lower C = Stronger Regularization. 
-                                  # Try 0.01, 0.05, 0.1. Small C prevents overfitting the 215 mergers.
-        class_weight='balanced',  # <--- CRITICAL: Handles the 16:1 imbalance automatically
-        random_state=42,
-        max_iter=50000
-    ))
-], verbose=True)
-
-param_grid = {
-    'svc__C': [0.1] 
-}
-
-print("Starting Grid Search...")
-grid = GridSearchCV(pipeline, param_grid, cv=5, verbose=2, scoring='f1_macro')
-grid.fit(Sx_train_log, Y_train_classes)
-
-print(f"Best Accuracy: {grid.best_score_}")
-print(f"Best Params: {grid.best_params_}")
-best_model = grid.best_estimator_
-
-preds = best_model.predict(Sx_test_log)
-
-'''
-mae = mean_absolute_error(Y_test_ratio, preds)
-rmse = root_mean_squared_error(Y_test_ratio, preds)
-r2 = r2_score(Y_test_ratio, preds)
-
-print(f"Test MAE: {mae:.4f}")
-print(f"Test RMSE: {rmse:.4f}")
-print(f"R2 Score: {r2:.4f}")
-'''
-
-preds_reshaped = preds.reshape(-1, 3)
-ground_truth_reshaped = Y_test_classes.reshape(-1, 3)
-
-# Majority Vote: sum the 3 predictions (0 or 1). If sum >= 2, it's a Merger (1).
-galaxy_preds_sum = preds_reshaped.sum(axis=1)
-galaxy_preds_final = (galaxy_preds_sum >= 2).astype(int)
-
-# Get the true label for the galaxy (taking the first one of the triplet is fine as they are all the same)
-galaxy_truth_final = ground_truth_reshaped[:, 0]
-
-print("\n=== Per-Image Performance ===")
-print(classification_report(Y_test_classes, preds, target_names=["Non-Merger", "Merger"]))
-
-print("\n=== Per-Galaxy Performance (Majority Voting) ===")
-print(classification_report(galaxy_truth_final, galaxy_preds_final, target_names=["Non-Merger", "Merger"]))
-
-dump(pipeline, 'galaxy_svr_model.joblib') 
-print("Model saved")
-
-'''
-plt.figure(figsize=(6, 6))
-plt.scatter(Y_test_ratio, preds, alpha=0.3, color='blue', label='Predictions')
-
-min_val = min(Y_test_ratio.min(), preds.min())
-max_val = max(Y_test_ratio.max(), preds.max())
-plt.plot([min_val, max_val], [min_val, max_val], 'r--', lw=2, label='Perfect Fit')
-
-plt.xlabel("True Log Mass Ratio (Ground Truth)")
-plt.ylabel("Predicted Log Mass Ratio")
-plt.legend()
-plt.grid(True, linestyle='--', alpha=0.5)
-
-plt.tight_layout()
-plt.show()
-'''

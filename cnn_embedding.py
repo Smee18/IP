@@ -3,6 +3,7 @@ os.environ["KERAS_BACKEND"] = "torch"
 import numpy as np
 import h5py
 from keras.applications.resnet_v2 import ResNet50V2, preprocess_input
+from tqdm import tqdm
 
 output_filename = r"maps/cnn_embedding_gray.npz"
 data_path = 'data/Galaxy10_DECals.h5'
@@ -19,7 +20,7 @@ def get_features_in_batches(hdf5_dataset, batch_size=32):
     n_samples = hdf5_dataset.shape[0]
     features = np.zeros((n_samples, 2048), dtype=np.float32)
     
-    for start in range(0, n_samples, batch_size):
+    for start in tqdm(range(0, n_samples, batch_size)):
         end = min(start + batch_size, n_samples)
         
         # SLICE DIRECTLY FROM HDF5 (Memory efficient)
