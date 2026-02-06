@@ -24,11 +24,12 @@ def clustering_scorer(estimator, X, y):
 
 def perform_grid_search(X_data, y_true, dim):
     results = []
+    best_labels = None
+    max_ari = -np.inf
 
     print("Starting Manual Parameter Sweep...")
-    for min_size in [25, 50, 75]:
-        for min_samp in [1, 5, 10]:
-            print(f"Trying min_size: {min_size}, min_samp: {min_samp}")
+    for min_size in [100]:
+        for min_samp in [20]:
             clusterer = hdbscan.HDBSCAN(min_cluster_size=min_size, min_samples=min_samp)
             labels = clusterer.fit_predict(X_data)
             
@@ -39,56 +40,40 @@ def perform_grid_search(X_data, y_true, dim):
                 'min_cluster_size': min_size,
                 'min_samples': min_samp,
                 'ARI': score,
-                'noise': noise_ratio
+                'noise': noise_ratio,
+                'labels': labels # Store labels to retrieve best ones
             })
+
+            if score > max_ari:
+                max_ari = score
+                best_labels = labels
 
     df_results = pd.DataFrame(results)
     df_sorted = df_results.sort_values(by='ARI', ascending=False)
-    print("--- Top Performing Clusters ---")
-    print(df_sorted.head(5))
-
-    best_ari = df_sorted.iloc[0]['ARI']
-    efficiency = best_ari / np.sqrt(dim)
-
-    print(f"\nBest ARI: {best_ari:.4f}")
-    print(f"Model Dimension: {dim}")
-    print(f"Efficiency Score (ARI/√d): {efficiency:.6f}")
-
-    return df_sorted
     
+    print(f"\nBest ARI: {df_sorted.iloc[0]['ARI']:.4f}")
+    
+    # Return both the dataframe and the labels of the best run
+    return df_sorted, best_labels
 
-def plot_umap(X_data, target_classes):
+def plot_comparison(manifold_coords, y_true, y_pred, model_name):
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
+    
+    # Plot 1: Ground Truth
+    scatter1 = ax1.scatter(manifold_coords[:, 0], manifold_coords[:, 1], 
+                          c=y_true, s=2.0, alpha=0.6, cmap='Spectral')
+    ax1.set_title(f"{model_name}: Ground Truth")
+    plt.colorbar(scatter1, ax=ax1)
 
-    standard_embedding = umap.UMAP(random_state=42, min_dist=0.1, n_neighbors = 10).fit_transform(X_data)
-    plt.figure(figsize=(10, 8))
-
-    subset_labels = label_indices[required_indices]
-    cmap = plt.get_cmap('Spectral')
-    norm = plt.Normalize(vmin=min(target_classes), vmax=max(target_classes))
-
-    scatter = plt.scatter(
-        standard_embedding[:, 0], 
-        standard_embedding[:, 1], 
-        c=subset_labels, 
-        s=1.0, 
-        cmap=cmap,
-        norm=norm
-    )
-
-    legend_elements = [
-        Line2D([0], [0], marker='o', color='w', 
-            label=f"Class {cls}",
-            markerfacecolor=cmap(norm(cls)), 
-            markersize=10) 
-        for cls in target_classes
-    ]
-
-    plt.legend(handles=legend_elements, loc='best', title="Galaxy Classes")
-    plt.title("UMAP Projection of Spiral Galaxy Features")
-    plt.xlabel("UMAP 1")
-    plt.ylabel("UMAP 2")
+    # Plot 2: HDBSCAN Predictions
+    # Note: c=y_pred will show clusters; -1 is noise (usually dark/grey)
+    scatter2 = ax2.scatter(manifold_coords[:, 0], manifold_coords[:, 1], 
+                          c=y_pred, s=2.0, alpha=0.6, cmap='tab20')
+    ax2.set_title(f"{model_name}: HDBSCAN Clusters (Best ARI)")
+    plt.colorbar(scatter2, ax=ax2)
 
     plt.show()
+    
 
 def load_cnn():
     output_filename = r"maps/cnn_embedding_gray.npz"
@@ -124,12 +109,20 @@ with h5py.File(data_path, 'r') as F:
 
 loaded_embeddings, dim, scatter_bool = load_cnn()
 
-target_classes = [0,1,2,3,4,5,6,7,8,9]
+target_classes = [6,8]
 mask = np.isin(label_indices, target_classes)
 required_indices = np.where(mask)[0]
 y_ground_truth = label_indices[required_indices]
-
 results = []
-X_scaled = prepare_embedding(loaded_embeddings[required_indices], is_scattering=scatter_bool)
-results = perform_grid_search(X_scaled, y_ground_truth, dim)
-plot_umap(X_scaled, target_classes)
+
+X_prepared = prepare_embedding(loaded_embeddings[required_indices], is_scattering=scatter_bool)
+
+print("Computing UMAP manifold...")
+reducer = umap.UMAP(random_state=42, min_dist=0.0, n_neighbors=100, metric='correlation')
+X_manifold = reducer.fit_transform(X_prepared)
+
+# Run search and get best labels
+results_df, best_hdbscan_labels = perform_grid_search(X_manifold, y_ground_truth, dim)
+
+# Plot the comparison
+plot_comparison(X_manifold, y_ground_truth, best_hdbscan_labels, "Kymatio Scattering")
