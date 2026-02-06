@@ -107,9 +107,9 @@ data_path = 'data/Galaxy10_DECals.h5'
 with h5py.File(data_path, 'r') as F:
     label_indices = np.array(F['ans'])
 
-loaded_embeddings, dim, scatter_bool = load_cnn()
+loaded_embeddings, dim, scatter_bool = load_rigid_motion()
 
-target_classes = [6,8]
+target_classes = [5,6]
 mask = np.isin(label_indices, target_classes)
 required_indices = np.where(mask)[0]
 y_ground_truth = label_indices[required_indices]
@@ -125,4 +125,4 @@ X_manifold = reducer.fit_transform(X_prepared)
 results_df, best_hdbscan_labels = perform_grid_search(X_manifold, y_ground_truth, dim)
 
 # Plot the comparison
-plot_comparison(X_manifold, y_ground_truth, best_hdbscan_labels, "Kymatio Scattering")
+plot_comparison(X_manifold, y_ground_truth, best_hdbscan_labels, "RM Scattering")
