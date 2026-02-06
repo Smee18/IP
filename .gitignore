@@ -3,3 +3,4 @@ figures/
 dop/
 .venv/
 maps/
+*.npz

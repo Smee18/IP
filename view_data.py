@@ -25,6 +25,10 @@ label_info = {
 9: "Edge-on Galaxies with Bulge"
 }
 
+Q = 3.5
+alpha = 0.06
+taper_2d = TukeyWindow(alpha=0.4)((256, 256))
+
 fig = plt.figure(figsize=(20, 8))
 
 for i in range(10):
@@ -36,12 +40,11 @@ for i in range(10):
     plt.subplot(2, 5, i + 1)
 
     image_color = images[single_image_idx]
-    gray_img = np.dot(image_color[..., :3], [0.299, 0.587, 0.114]) / 255.0
-    stretch = np.arcsinh(0.06 * 3.5 * stretch) // 3.5
-    taper = TukeyWindow(alpha=0.4)
-    final_img = stretch * taper
+    raw_flux = image_color[..., 1].astype(np.float32) / 255.0
+    stretched_img = np.arcsinh(alpha * Q * raw_flux) / Q
+    final_img = stretched_img * taper_2d
     
-    plt.imshow(gray_img, cmap='gray')
+    plt.imshow(final_img, cmap='gray')
     plt.title(f"{label_info[i]}") 
     plt.axis('off') 
 
