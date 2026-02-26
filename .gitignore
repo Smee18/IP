@@ -4,3 +4,4 @@ dop/
 .venv/
 maps/
 *.npz
+__pycache__/
