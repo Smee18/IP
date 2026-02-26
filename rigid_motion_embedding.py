@@ -96,61 +96,67 @@ def get_scattering_maps(image):
 
 
     for parent_dict in order1_cubes:
-        parent_j = parent_dict['j']
-        parent_cube = parent_dict['cube']
-        
-        unique_j2 = sorted(list(set(f['j'] for f in filters_set['psi'])))
-        
-        for j2 in unique_j2:
-            if j2 > parent_j:
+            parent_j = parent_dict['j']
+            parent_cube = parent_dict['cube'] # Shape: (L, 256, 256)
             
-                filters_at_j2 = [f['levels'][0][np.newaxis, ...] for f in filters_set['psi'] if f['j'] == j2]
-                
-                temp_spatial_convolutions = [] # New cube
-                
-                for theta1_idx in range(L): # Loop over angles
-
-                    # Spatial convolve
-                    freq_slice = parent_cube[theta1_idx]                 # Retrieve slice
-                    theta2_convolutions = []
-
-                    for theta2_idx in range(L):
-                        conv_2_freq = freq_slice * filters_at_j2[theta2_idx] 
-                        u2_spatial = np.abs(np.fft.ifft2(conv_2_freq))
-                        theta2_convolutions.append(u2_spatial)
+            unique_j2 = sorted(list(set(f['j'] for f in filters_set['psi'])))
+            
+            for j2 in unique_j2:
+                if j2 > parent_j:
+                    filters_at_j2 = [f['levels'][0][np.newaxis, ...] for f in filters_set['psi'] if f['j'] == j2]
+                    
+                    # 1. Build the Covariant Tensor aligned by RELATIVE angle
+                    # Shape: (L_rel, L_global, H, W)
+                    aligned_u2_spatial = np.zeros((L, L) + parent_cube.shape[1:], dtype=np.complex128)
+                    
+                    for theta1_idx in range(L): # The global orientation axis
+                        freq_slice = parent_cube[theta1_idx] 
                         
-                    temp_spatial_convolutions.append(np.stack(theta2_convolutions))
-                
-                u2_cross_spatial = np.stack(temp_spatial_convolutions)             # Stack up
-                u2_cross_freq_theta1 = np.fft.fft(u2_cross_spatial, axis=0)                 # Back to spatial domain
-                broadcast_shape = [-1] + [1] * (u2_cross_spatial.ndim - 1)             # FFT along orientation Z axis
-                phi_ang_broadcast = phi_ang_filter.reshape(broadcast_shape)
-                low_pass_response = u2_cross_freq_theta1 * phi_ang_broadcast 
-                u2_low = np.abs(np.fft.ifft(low_pass_response, axis=0))
-                
-                # Integrate out both angular dimensions for pure spatial rotation invariance
-                s2_low_map = np.sum(u2_low, axis=(0, 1)) 
-                
-                s2_freq = np.fft.fft2(s2_low_map) * low_pass_gaussian                      
-                s2 = np.real(np.fft.ifft2(s2_freq))                                        
-                s2_down = s2[:, ::downscale_factor, ::downscale_factor]            
-                coeff_maps_list.append(s2_down.reshape(-1))
-
-                # High - pass
-                for wavelet1d in wavelets1d_list:
-                    wavelet1d_broadcast = wavelet1d.reshape(broadcast_shape)
-                    convolved_L = u2_cross_freq_theta1 * wavelet1d_broadcast                         
+                        for theta_rel_idx in range(L): # The internal structural angle
+                            # Lock the relative angle using modulo arithmetic
+                            theta2_idx = (theta1_idx + theta_rel_idx) % L
+                            
+                            # Spatial convolution
+                            conv_2_freq = freq_slice * filters_at_j2[theta2_idx] 
+                            u2_spatial = np.abs(np.fft.ifft2(conv_2_freq))
+                            
+                            aligned_u2_spatial[theta_rel_idx, theta1_idx] = u2_spatial
                     
-                    u2_complex = np.fft.ifft(convolved_L, axis=0)                      
-                    u2 = np.abs(u2_complex)                                                          
+                    # 2. Angular Convolution along the GLOBAL orientation axis (axis=1)
+                    u2_ang_freq = np.fft.fft(aligned_u2_spatial, axis=1)
+                    broadcast_shape = (1, L, 1, 1, 1)
                     
-                    # Integrate out both angular dimensions for spatial rotation invariance
-                    u2_rotation_invariant = np.sum(u2, axis=(0, 1))                        
+                    # --- Low-Pass Angular Filter ---
+                    phi_ang_broadcast = phi_ang_filter.reshape(broadcast_shape)
+                    s2_ang_low_freq = u2_ang_freq * phi_ang_broadcast
+                    s2_ang_low_spatial = np.abs(np.fft.ifft(s2_ang_low_freq, axis=1))
                     
-                    s2_freq = np.fft.fft2(u2_rotation_invariant) * low_pass_gaussian                      
-                    s2 = np.real(np.fft.ifft2(s2_freq))                                        
-                    s2_down = s2[:, ::downscale_factor, ::downscale_factor]            
-                    coeff_maps_list.append(s2_down.reshape(-1))
+                    # Integrate out ONLY the global orientation (axis=1). 
+                    # This leaves the relative angle (axis=0) intact as a feature dimension!
+                    s2_invariant_rel = np.sum(s2_ang_low_spatial, axis=1) 
+                    
+                    # Spatial Low-pass and append for each relative angle
+                    for theta_rel_idx in range(L):
+                        s2_freq = np.fft.fft2(s2_invariant_rel[theta_rel_idx]) * low_pass_gaussian
+                        s2 = np.real(np.fft.ifft2(s2_freq))
+                        s2_down = s2[:, ::downscale_factor, ::downscale_factor]
+                        coeff_maps_list.append(s2_down.reshape(-1))
+                    
+                    # --- High-Pass Angular Filters (1D Wavelets) ---
+                    for wavelet1d in wavelets1d_list:
+                        wavelet1d_broadcast = wavelet1d.reshape(broadcast_shape)
+                        u2_ang_high_freq = u2_ang_freq * wavelet1d_broadcast
+                        u2_ang_high_spatial = np.abs(np.fft.ifft(u2_ang_high_freq, axis=1))
+                        
+                        # Integrate out ONLY the global orientation
+                        u2_invariant_rel = np.sum(u2_ang_high_spatial, axis=1)
+                        
+                        # Spatial Low-pass and append for each relative angle
+                        for theta_rel_idx in range(L):
+                            s2_freq = np.fft.fft2(u2_invariant_rel[theta_rel_idx]) * low_pass_gaussian
+                            s2 = np.real(np.fft.ifft2(s2_freq))
+                            s2_down = s2[:, ::downscale_factor, ::downscale_factor]
+                            coeff_maps_list.append(s2_down.reshape(-1))
 
     final_maps = np.concatenate(coeff_maps_list)
 
@@ -184,7 +190,7 @@ n_pixels = spatial_side ** 2
 
 n_order0 = 1 # Low pass filter
 n_order1 = J # Each scale and angle pair
-n_order2 = (J * (J - 1) // 2) * (K+1) # J2 > J1
+n_order2 = (J * (J - 1) // 2) * L * (K + 1)
 n_maps_per_channel = n_order0 + n_order1 + n_order2
 
 n_features = n_maps_per_channel * n_pixels
@@ -194,7 +200,7 @@ wavelets1d_list = get_1d_wavelets(L=L, K = K)
 phi_ang_filter = get_angular_phi(L)
 
 output_filename = r"maps/rigid_motion_embedding_gray.npz"
-data_path = 'data/Galaxy10_DECals.h5'
+data_path = 'data/Galaxy10_ProcessedandCropped.h5'
 
 if os.path.exists(output_filename):
     print("Loading saved features...")
