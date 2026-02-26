@@ -34,7 +34,7 @@ with h5py.File(raw_path, 'r') as F_raw, h5py.File(processed_path, 'w') as F_proc
             z = batch_redshift[i]
             
             # The Data Gateway: Drop NaNs, negative, or zero redshifts instantly
-            if np.isnan(z) or z <= 0.0:
+            if np.isnan(z) or z < 0.001:
                 continue
             
             # 1. Target Scale Calculation
