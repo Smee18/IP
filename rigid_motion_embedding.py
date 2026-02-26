@@ -62,8 +62,8 @@ def get_scattering_maps(image):
     # Order 1 maps
     order1_cubes = []
     cube_stack = []
-    psi_filters = filters_set['psi'] # Get Morlet wavelets by scale
-    u1_sum_spatial = 0 
+    s1_maps = []
+    psi_filters = filters_set['psi']  # Get Morlet wavelets by scale
     
     for f_dict in psi_filters:
         j = f_dict['j']
@@ -73,22 +73,24 @@ def get_scattering_maps(image):
         conv_freq = freq_channel * f_freq                       # Convole with wavelet
         conv_spatial = np.fft.ifft2(conv_freq)                  # Convert to spatial to apply Non-Linearity
         u1_spatial = np.abs(conv_spatial)                       # Take the modulus
-        u1_sum_spatial = u1_sum_spatial + u1_spatial            # Add to sum
-        u1_freq = np.fft.fft2(u1_spatial)                       # Convert back to fourier space
+
+
+        u1_freq = np.fft.fft2(u1_spatial)
+        s1_freq = u1_freq * low_pass_gaussian
+        s1_spatial = np.real(np.fft.ifft2(s1_freq))
+        s1_maps.append(s1_spatial)
+
         cube_stack.append(u1_freq)                              # Add layer to cube
 
         if theta == (L - 1): # When cube full
 
-            u1_sum_freq = np.fft.fft2(u1_sum_spatial)               # FFT the sum of modulus
-            s1_freq = u1_sum_freq * low_pass_gaussian               # Smooth with low pass filter
-            s1 = np.real(np.fft.ifft2(s1_freq))                     # Convert back to spatial domain
-            s1_down = s1[:, ::downscale_factor, ::downscale_factor] # Downscale
+            s1_invariant = np.sum(np.stack(s1_maps), axis=0)
+            s1_down = s1_invariant[:, ::downscale_factor, ::downscale_factor]
             coeff_maps_list.append(s1_down.reshape(-1))             # Flatten and add to list
         
             cube_arr = np.stack(cube_stack)                  # Convert cube to 3D
             order1_cubes.append({'j': j, 'cube': cube_arr})  # Add to list
             cube_stack = []                                  # Reset stack
-            u1_sum_spatial =  0                              # Reset sum
     
     # Order 2 maps
 
@@ -106,40 +108,49 @@ def get_scattering_maps(image):
                 
                 temp_spatial_convolutions = [] # New cube
                 
-                for angle_idx in range(L): # Loop over angles
+                for theta1_idx in range(L): # Loop over angles
 
                     # Spatial convolve
-                    freq_slice = parent_cube[angle_idx]                 # Retrieve slice
-                    conv_2_freq = freq_slice * filters_at_j2[angle_idx] # Convole with matching angle wavelet
-                    temp_spatial_convolutions.append(conv_2_freq)       # Store in new cube
-                
-                spatial_pass_cube = np.stack(temp_spatial_convolutions)            # Stack up
-                cube_spatial = np.fft.ifft2(spatial_pass_cube)                     # Back to spatial domain
-                cube_L_freq = np.fft.fft(cube_spatial, axis=0)                     # FFT along orientation Z axis
+                    freq_slice = parent_cube[theta1_idx]                 # Retrieve slice
+                    theta2_convolutions = []
 
-                # Low - pass
-                low_pass_response = cube_L_freq * phi_ang_filter[
-                        :, np.newaxis, np.newaxis, np.newaxis] 
+                    for theta2_idx in range(L):
+                        conv_2_freq = freq_slice * filters_at_j2[theta2_idx] 
+                        u2_spatial = np.abs(np.fft.ifft2(conv_2_freq))
+                        theta2_convolutions.append(u2_spatial)
+                        
+                    temp_spatial_convolutions.append(np.stack(theta2_convolutions))
+                
+                u2_cross_spatial = np.stack(temp_spatial_convolutions)             # Stack up
+                u2_cross_freq_theta1 = np.fft.fft(u2_cross_spatial, axis=0)                 # Back to spatial domain
+                broadcast_shape = [-1] + [1] * (u2_cross_spatial.ndim - 1)             # FFT along orientation Z axis
+                phi_ang_broadcast = phi_ang_filter.reshape(broadcast_shape)
+                low_pass_response = u2_cross_freq_theta1 * phi_ang_broadcast 
                 u2_low = np.abs(np.fft.ifft(low_pass_response, axis=0))
-                s2_low_map = np.sum(u2_low, axis=0)
-                u2_freq_domain = np.fft.fft2(s2_low_map)                           # FFT for low pass
-                s2_freq = u2_freq_domain * low_pass_gaussian                       # Convolve with low pass filter
-                s2 = np.real(np.fft.ifft2(s2_freq))                                # Back to spatial domain
-                s2_down = s2[:, ::downscale_factor, ::downscale_factor]            # Downscale
-                coeff_maps_list.append(s2_down.reshape(-1))                        # Flatten and add to list
+                
+                # Integrate out both angular dimensions for pure spatial rotation invariance
+                s2_low_map = np.sum(u2_low, axis=(0, 1)) 
+                
+                s2_freq = np.fft.fft2(s2_low_map) * low_pass_gaussian                      
+                s2 = np.real(np.fft.ifft2(s2_freq))                                        
+                s2_down = s2[:, ::downscale_factor, ::downscale_factor]            
+                coeff_maps_list.append(s2_down.reshape(-1))
 
                 # High - pass
                 for wavelet1d in wavelets1d_list:
-                    convolved_L = cube_L_freq * wavelet1d[
-                        :, np.newaxis, np.newaxis, np.newaxis]                         # 1D convolution
-                    u2_complex = np.fft.ifft(convolved_L, axis=0)                      # Back to spatial for orientation
-                    u2 = np.abs(u2_complex)                                            # Take the modulus
-                    u2_rotation_invariant = np.sum(u2, axis=0)                         # Sum over angular layers
-                    u2_freq_domain = np.fft.fft2(u2_rotation_invariant)                # FFT for low pass
-                    s2_freq = u2_freq_domain * low_pass_gaussian                       # Convolve with low pass filter
-                    s2 = np.real(np.fft.ifft2(s2_freq))                                # Back to spatial domain
-                    s2_down = s2[:, ::downscale_factor, ::downscale_factor]            # Downscale
-                    coeff_maps_list.append(s2_down.reshape(-1))                        # Flatten and add to list
+                    wavelet1d_broadcast = wavelet1d.reshape(broadcast_shape)
+                    convolved_L = u2_cross_freq_theta1 * wavelet1d_broadcast                         
+                    
+                    u2_complex = np.fft.ifft(convolved_L, axis=0)                      
+                    u2 = np.abs(u2_complex)                                                          
+                    
+                    # Integrate out both angular dimensions for spatial rotation invariance
+                    u2_rotation_invariant = np.sum(u2, axis=(0, 1))                        
+                    
+                    s2_freq = np.fft.fft2(u2_rotation_invariant) * low_pass_gaussian                      
+                    s2 = np.real(np.fft.ifft2(s2_freq))                                        
+                    s2_down = s2[:, ::downscale_factor, ::downscale_factor]            
+                    coeff_maps_list.append(s2_down.reshape(-1))
 
     final_maps = np.concatenate(coeff_maps_list)
 
@@ -155,12 +166,9 @@ def get_features_in_batches(hdf5_dataset, batch_size=32):
         
         batch_rgb = hdf5_dataset[start:end].astype(np.float32)
         
-        batch_gray = (0.299 * batch_rgb[..., 0] + 
-                      0.587 * batch_rgb[..., 1] + 
-                      0.114 * batch_rgb[..., 2]) / 255.0
         
         for i in range(end - start):
-            img_input = batch_gray[i][np.newaxis, ...] 
+            img_input = batch_rgb[i] 
             features[start + i] = get_scattering_maps(img_input)
     
     return features
