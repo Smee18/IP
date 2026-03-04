@@ -177,18 +177,20 @@ phi_ang_filter = get_angular_phi(L)                    # Creates Low pass filter
 output_filename = r"maps/rigid_motion_embedding_gray.npz"
 data_path       = 'data/Galaxy10_ProcessedandCropped.h5'
 
-if os.path.exists(output_filename):
-    print("Loading saved features...")
-    data = np.load(output_filename)
-    rm_embeddings = data['rm_embeddings']
-else:
-    print("Opening HDF5 file for lazy-loading...")
-    with h5py.File(data_path, 'r') as F:
-        # Pass the HDF5 dataset directly to the batch function
-        rm_embeddings = get_features_in_batches(F['images'], batch_size=16)
-    
-    # Save results
-    np.savez_compressed(output_filename, rm_embeddings=rm_embeddings)
-    print(f"Extraction Complete. Shape: {rm_embeddings.shape}")
+
+if __name__ == '__main__':
+    if os.path.exists(output_filename):
+        print("Loading saved features...")
+        data = np.load(output_filename)
+        rm_embeddings = data['rm_embeddings']
+    else:
+        print("Opening HDF5 file for lazy-loading...")
+        with h5py.File(data_path, 'r') as F:
+            # Pass the HDF5 dataset directly to the batch function
+            rm_embeddings = get_features_in_batches(F['images'], batch_size=16)
+        
+        # Save results
+        np.savez_compressed(output_filename, rm_embeddings=rm_embeddings)
+        print(f"Extraction Complete. Shape: {rm_embeddings.shape}")
 
 
