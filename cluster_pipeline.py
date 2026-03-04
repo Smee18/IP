@@ -102,7 +102,7 @@ def load_rigid_motion():
 
 ### MAIN CODE ###
 
-data_path = 'data/Galaxy10_DECals.h5'
+data_path = 'data\Galaxy10_ProcessedandCropped.h5'
 
 with h5py.File(data_path, 'r') as F:
     label_indices = np.array(F['ans'])
