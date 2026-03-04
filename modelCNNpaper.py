@@ -19,30 +19,6 @@ Y_stellar_mass = data['Y_stellar_mass']
 
 print(f"{np.count_nonzero(Y_is_merger)} mergers | {len(Y_is_merger) - np.count_nonzero(Y_is_merger)} non mergers")
 
-'''
-fig = plt.figure(figsize=(10, 7))
-
-# Add the first image to the figure (top-left position)
-plt.subplot(1, 3, 1)  # 2 rows, 2 columns, first position
-plt.imshow((X[42].transpose(1, 2, 0)))  
-plt.axis('off')  # Hide the axis labels
-plt.title("Image 1") 
-
-# Add the second image to the figure (top-right position)
-plt.subplot(1, 3, 2)  # 2 rows, 2 columns, second position
-plt.imshow((X[42].transpose(1, 2, 0)))  
-plt.axis('off')  # Hide the axis labels
-plt.title("Image 2") 
-
-# Add the third image to the figure (bottom-left position)
-plt.subplot(1, 3, 3)  # 2 rows, 2 columns, third position
-plt.imshow((X[42].transpose(1, 2, 0))) 
-plt.axis('off')  # Hide the axis labels
-plt.title("Image 3")  
-
-plt.show()
-'''
-
 
 random_state = 42
 
