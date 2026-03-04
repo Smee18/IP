@@ -19,27 +19,16 @@ def get_features_in_batches(hdf5_dataset, batch_size=32):
     
     n_samples = hdf5_dataset.shape[0]
     features = np.zeros((n_samples, 2048), dtype=np.float32)
-    
-    for start in tqdm(range(0, n_samples, batch_size), desc="CNN Extraction"):
+
+    for start in tqdm(range(0, n_samples, batch_size), desc="Extracting CNN"):
         end = min(start + batch_size, n_samples)
         
-        # SLICE DIRECTLY FROM HDF5 (Memory efficient)
         batch = hdf5_dataset[start:end].astype(np.float32)
         
-        # 1. Manual Grayscale conversion (BT.601)
-        gray_batch = (0.299 * batch[..., 0] + 
-                      0.587 * batch[..., 1] + 
-                      0.114 * batch[..., 2])
-        
-        # 2. Triple-stack for ResNet compatibility
-        batch_stacked = np.stack([gray_batch] * 3, axis=-1)
-        
-        # 3. Scale to [-1, 1]
-        batch_processed = preprocess_input(batch_stacked)
-        
-        # 4. Predict
-        features[start:end] = model.predict(batch_processed, verbose=0)
-            
+        for i in range(end - start):
+            img_input = batch[i] 
+            features[start + i] = model.predict(img_input)
+    
     return features
 
 # Main Execution Logic
