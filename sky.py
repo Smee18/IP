@@ -98,4 +98,4 @@ def sigma_clip(data, alpha=3, tolerance=0.1, max_iterations=1000,
         print('Mean:             %g' %(np.nanmean(data[mask])))
         print('Sigma:            %g' %(np.nanstd(data[mask])))
         
-    return mask
+    return mask 
