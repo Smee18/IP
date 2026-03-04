@@ -43,18 +43,11 @@ def get_features_in_batches(hdf5_dataset, batch_size=32):
         end = min(start + batch_size, n_samples)
         
         batch = hdf5_dataset[start:end].astype(np.float32)
-        gray_batch = (0.299 * batch[..., 0] + 0.587 * batch[..., 1] + 0.114 * batch[..., 2]) / 255.0
+        batch_t = torch.from_numpy(batch).to(device)
         
-        # Convert to Torch Tensor
-        batch_t = torch.from_numpy(gray_batch).to(device)
-        
-        # Compute: returns (Batch, 681, 8, 8)
-        S = model(batch_t)
-        
-        # Average Pool and move back to CPU/NumPy
-        with torch.no_grad():  
-            S = model(batch_t)
-            features[start:end] = S.mean(dim=(2, 3)).cpu().numpy()
+        for i in range(end - start):
+            img_input = batch[i] 
+            features[start + i] = model(img_input)
         
     return features
 
