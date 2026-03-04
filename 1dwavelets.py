@@ -1,23 +1,28 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-def get_1d_wavelets(L, k_scale=1, sigma_scale=0.8):
-    psi_freq_list = []
-    for k in range(k_scale):
-        qs = np.fft.fftfreq(L) * L 
-        # Your corrected logic: Frequency decreases as k increases
-        xi = 2.5 * (2**-k)   
-        sigma = sigma_scale * (2**-k)
+def get_1d_wavelets(L, K=1):
+    """Returns a list of K 1D wavelets for the angular axis."""
+    psi_list = []
+    qs = np.fft.fftfreq(L) * L
+    
+    for k in range(1, K + 1):
+        # xi is the center frequency. It must stay below L/2.
+        xi = 0.85 * (np.pi) * (2**(-k)) * (L / (2 * np.pi))
+        sigma = 0.8 * (2**(-k)) * (L / (2 * np.pi))
         
+        # Gaussian peak + DC correction (Morlet)
         gaussian_peak = np.exp(- (qs - xi)**2 / (2 * sigma**2))
-        gaussian_correction = np.exp(- (qs**2) / (2 * sigma**2)) 
         kappa = np.exp(- 0.5 * xi**2 / sigma**2)
+        gaussian_correction = np.exp(- (qs**2) / (2 * sigma**2))
         
         psi_freq = gaussian_peak - kappa * gaussian_correction
+        
+        # Normalize to unit L-infinity norm for energy stability
         psi_freq /= np.max(np.abs(psi_freq))
-        psi_freq_list.append(psi_freq)
-    
-    return psi_freq_list
+        psi_list.append(psi_freq)
+        
+    return psi_list
 
 # Parameters for visualization
 L_demo = 256  # High resolution for smooth plots
