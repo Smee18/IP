@@ -2,8 +2,9 @@ import numpy as np
 from sklearn.metrics import adjusted_rand_score
 import hdbscan
 import pandas as pd
-from sklearn.preprocessing import Normalizer
+from sklearn.preprocessing import StandardScaler
 import umap
+from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import h5py
 from sklearn.metrics import silhouette_score
@@ -20,14 +21,25 @@ import plotly.graph_objects as go
 import dash
 from dash import dcc, html, Input, Output
 
+J = 3
+L= 8
+
 
 def prepare_embedding(embeddings, is_scattering=False):
     if is_scattering:
-
         embeddings = np.log1p(embeddings)
     
-    scaler = Normalizer(norm='l2')
-    return scaler.fit_transform(embeddings)
+    s1_s2_data = embeddings[:, 1:] 
+    s1_end = J * L
+    
+    s1_data = s1_s2_data[:, :s1_end]
+    s2_data = s1_s2_data[:, s1_end:]
+
+    scaler = StandardScaler()
+    s1_norm = scaler.fit_transform(s1_data)
+    s2_norm = scaler.fit_transform(s2_data)
+
+    return np.hstack([s1_norm, s2_norm])
 
 def clustering_scorer(estimator, X, y):
 
@@ -348,7 +360,7 @@ if __name__ == "__main__":
     plot_confusion(confusion_matrix, class_names)
 
     '''
-    target_classes = [1,4]
+    target_classes = [5,6]
     with h5py.File(data_path, 'r') as F:
         label_indices = np.array(F['ans']) # Copy to memory
         mask = np.isin(label_indices, target_classes)
@@ -359,9 +371,12 @@ if __name__ == "__main__":
     y_ground_truth = label_indices[required_indices]
     X_prepared = prepare_embedding(loaded_embeddings[required_indices], is_scattering=scatter_bool)
 
+    pca = PCA(n_components=0.95)
+    PCA_X = pca.fit_transform(X_prepared)
+
     # UMAP step
-    reducer = umap.UMAP(n_components=3, random_state=42, min_dist=0.0, n_neighbors=30, metric='correlation')
-    X_manifold_3d = reducer.fit_transform(X_prepared)
+    reducer = umap.UMAP(n_components=3, random_state=42, min_dist=0.1, n_neighbors=50, metric='correlation')
+    X_manifold_3d = reducer.fit_transform(PCA_X)
     run_dash_explorer(X_manifold_3d, y_ground_truth, subset_images)
 
     #plt.scatter(X_manifold[:, 0], X_manifold[:, 1], c=y_ground_truth, s=2.0, alpha=0.6, cmap='Spectral')
