@@ -15,6 +15,10 @@ from PIL import Image
 import base64
 from bokeh.transform import factor_cmap
 from bokeh.palettes import Category10
+import plotly.express as px
+import plotly.graph_objects as go
+import dash
+from dash import dcc, html, Input, Output
 
 
 def prepare_embedding(embeddings, is_scattering=False):
@@ -154,6 +158,128 @@ def save_interactive_umap(X_manifold, y_true, images, filename="umap_explorer.ht
     output_file(f"{filename}18")
     save(p)
     print(f"Interactive manifold saved to {filename}")
+
+def save_interactive_3d_umap(X_manifold, y_true, images, filename="umap_3d_explorer.html"):
+    """Generates a 3D interactive UMAP visualization using Plotly."""
+    
+    # Convert labels to strings for the legend
+    label_strings = y_true.astype(str)
+    
+    # Create DataFrame for Plotly
+    df = pd.DataFrame({
+        'UMAP 1': X_manifold[:, 0],
+        'UMAP 2': X_manifold[:, 1],
+        'UMAP 3': X_manifold[:, 2],
+        'Class': label_strings,
+        'image_base64': [array_to_base64(img) for img in images]
+    })
+
+    # Create the 3D Scatter plot
+    fig = px.scatter_3d(
+        df, 
+        x='UMAP 1', y='UMAP 2', z='UMAP 3',
+        color='Class',
+        title="Galaxy Morphology 3D Continuum Explorer",
+        opacity=0.7,
+        template="plotly_dark"  # Dark theme often looks better for space data
+    )
+
+    # Update markers and add custom hover data
+    fig.update_traces(
+        marker=dict(size=3),
+        hovertemplate="<b>Class: %{customdata[0]}</b><br><img src='%{customdata[1]}' width='128'><extra></extra>",
+        customdata=df[['Class', 'image_base64']].values
+    )
+
+    # Save to HTML
+    fig.write_html(filename)
+    print(f"3D Interactive manifold saved to {filename}")
+
+def run_dash_explorer(X_manifold, y_true, images):
+    app = dash.Dash(__name__)
+
+    # 1. Prepare Data
+    # We keep the indices to map back to the 'images' array accurately
+    df = pd.DataFrame({
+        'UMAP 1': X_manifold[:, 0],
+        'UMAP 2': X_manifold[:, 1],
+        'UMAP 3': X_manifold[:, 2],
+        'Class': y_true.astype(str),
+        'point_index': np.arange(len(y_true)) 
+    })
+
+    fig = px.scatter_3d(
+        df, x='UMAP 1', y='UMAP 2', z='UMAP 3',
+        color='Class', 
+        opacity=0.7, 
+        template="plotly_dark", 
+        height=800,
+        # custom_data allows us to pass the index to the click/hover event
+        custom_data=['point_index', 'Class']
+    )
+    
+    # Clean up the 3D view: remove the messy text box following the cursor
+    fig.update_traces(
+        marker=dict(size=3),
+        hoverinfo='none', 
+        hovertemplate=None
+    )
+
+    # 2. Layout with Flexbox for better alignment
+    app.layout = html.Div([
+        html.Div([
+            dcc.Graph(id='3d-scatter', figure=fig, clear_on_unhover=False)
+        ], style={'width': '70%', 'display': 'inline-block'}),
+        
+        html.Div([
+            html.H2("Galaxy Inspector", style={'color': 'white'}),
+            html.Hr(),
+            html.Div(id='image-container', children=[
+                html.P("Hover over a galaxy to inspect morphology", style={'color': '#888'})
+            ]),
+            html.Div(id='class-label', style={
+                'fontSize': '24px', 
+                'fontWeight': 'bold', 
+                'marginTop': '20px',
+                'color': 'cyan'
+            })
+        ], style={
+            'width': '28%', 
+            'display': 'inline-block', 
+            'vertical-align': 'top', 
+            'padding': '20px', 
+            'backgroundColor': '#111',
+            'height': '100vh'
+        })
+    ], style={'backgroundColor': '#111', 'display': 'flex'})
+
+    # 3. Callback to update side panel
+    @app.callback(
+        [Output('image-container', 'children'),
+         Output('class-label', 'children')],
+        [Input('3d-scatter', 'hoverData')]
+    )
+    def display_hover_data(hoverData):
+        if hoverData is None:
+            return html.Div("Hover over a point"), ""
+        
+        try:
+            # Extract the index we stored in custom_data
+            point_idx = hoverData['points'][0]['customdata'][0]
+            label = hoverData['points'][0]['customdata'][1]
+            
+            # Convert the specific image on the fly
+            img_base64 = array_to_base64(images[point_idx])
+            
+            img_element = html.Img(
+                src=img_base64, 
+                style={'width': '100%', 'border': '2px solid white', 'borderRadius': '8px'}
+            )
+            return img_element, f"Class: {label}"
+        except Exception as e:
+            return html.Div(f"Error loading image: {e}"), ""
+
+    app.run(debug=True, use_reloader=False)
     
 
 def load_cnn():
@@ -169,70 +295,74 @@ def load_kymatio():
     print("Loading saved features...")
     data = np.load(output_filename)
     kymatio_embeddings = data['kymatio_embeddings']
-    dim = 611
+    dim = 112
     return kymatio_embeddings, dim, True
 
 def load_rigid_motion():
-    output_filename = r"maps/rigid_motion_embedding_gray.npz"
+    output_filename = r"maps/rigid_motion_embedding_gray_v4.npz"
     print("Loading saved features...")
     data = np.load(output_filename)
     rm_embeddings = data['rm_embeddings']
-    dim = 264
+    dim = 112
     return rm_embeddings, dim, True
 
 
 ### MAIN CODE ###
 
-data_path = 'data/Galaxy10_ProcessedandCropped.h5'
+if __name__ == "__main__":
+
+    data_path = 'data/Galaxy10_ProcessedandCroppedV4.h5'
 
 
-loaded_embeddings, dim, scatter_bool = load_rigid_motion()
-confusion_matrix = np.zeros((10, 10))
-num_classes = 10
-"""
-for i in range(num_classes):
-    for j in range(num_classes):
-        print(f"Testing {i}-{j}")
-        if i >= j: 
-            continue 
+    loaded_embeddings, dim, scatter_bool = load_rigid_motion()
+    confusion_matrix = np.zeros((10, 10))
+    num_classes = 10
+    '''
+    with h5py.File(data_path, 'r') as F:
+        label_indices = np.array(F['ans']) # Copy to memory
+
+    for i in range(num_classes):
+        for j in range(num_classes):
+            print(f"Testing {i}-{j}")
+            if i >= j: 
+                continue 
+                
+            target_classes = [i, j]
+            mask = np.isin(label_indices, target_classes)
+            required_indices = np.where(mask)[0]
             
-        target_classes = [i, j]
+            y_ground_truth = label_indices[required_indices]
+            X_prepared = prepare_embedding(loaded_embeddings[required_indices], is_scattering=scatter_bool)
+
+            # UMAP step
+            reducer = umap.UMAP(random_state=42, min_dist=0.0, n_neighbors=30, metric='correlation')
+            X_manifold = reducer.fit_transform(X_prepared)
+
+            if len(np.unique(y_ground_truth)) > 1:
+                score = silhouette_score(X_manifold, y_ground_truth)
+                normalized_score = (score + 1) / 2 
+                confusion_matrix[i, j] = normalized_score
+                confusion_matrix[j, i] = normalized_score
+    
+    class_names= ["Disturbed","Merging","Round Smooth","In-between Round Smooth","Cigar Shaped Smooth","Barred Spiral","Unbarred Tight Spiral","Unbarred Loose Spiral","Edge-on without Bulge","Edge-on with Bulge"]
+    plot_confusion(confusion_matrix, class_names)
+
+    '''
+    target_classes = [1,4]
+    with h5py.File(data_path, 'r') as F:
+        label_indices = np.array(F['ans']) # Copy to memory
         mask = np.isin(label_indices, target_classes)
         required_indices = np.where(mask)[0]
-        
-        y_ground_truth = label_indices[required_indices]
-        X_prepared = prepare_embedding(loaded_embeddings[required_indices], is_scattering=scatter_bool)
+        # Ensure this is a numpy array in memory, not a H5 dataset pointer
+        subset_images = np.array(F['images'][required_indices])
 
-        # UMAP step
-        reducer = umap.UMAP(random_state=42, min_dist=0.0, n_neighbors=30, metric='correlation')
-        X_manifold = reducer.fit_transform(X_prepared)
+    y_ground_truth = label_indices[required_indices]
+    X_prepared = prepare_embedding(loaded_embeddings[required_indices], is_scattering=scatter_bool)
 
-        if len(np.unique(y_ground_truth)) > 1:
-            score = silhouette_score(X_manifold, y_ground_truth)
-            normalized_score = (score + 1) / 2 
-            confusion_matrix[i, j] = normalized_score
-            confusion_matrix[j, i] = normalized_score
-    
-class_names= ["Disturbed","Merging","Round Smooth","In-between Round Smooth","Cigar Shaped Smooth","Barred Spiral","Unbarred Tight Spiral","Unbarred Loose Spiral","Edge-on without Bulge","Edge-on with Bulge"]
-plot_confusion(confusion_matrix, class_names)
-"""
+    # UMAP step
+    reducer = umap.UMAP(n_components=3, random_state=42, min_dist=0.0, n_neighbors=30, metric='correlation')
+    X_manifold_3d = reducer.fit_transform(X_prepared)
+    run_dash_explorer(X_manifold_3d, y_ground_truth, subset_images)
 
-target_classes = [1,8]
-with h5py.File(data_path, 'r') as F:
-    label_indices = np.array(F['ans']) # Copy to memory
-    mask = np.isin(label_indices, target_classes)
-    required_indices = np.where(mask)[0]
-    # Ensure this is a numpy array in memory, not a H5 dataset pointer
-    subset_images = np.array(F['images'][required_indices])
-
-
-y_ground_truth = label_indices[required_indices]
-X_prepared = prepare_embedding(loaded_embeddings[required_indices], is_scattering=scatter_bool)
-
-# UMAP step
-reducer = umap.UMAP(random_state=42, min_dist=0.0, n_neighbors=30, metric='correlation')
-X_manifold = reducer.fit_transform(X_prepared)
-save_interactive_umap(X_manifold, y_ground_truth, subset_images)
-
-#plt.scatter(X_manifold[:, 0], X_manifold[:, 1], c=y_ground_truth, s=2.0, alpha=0.6, cmap='Spectral')
-#plt.show()
+    #plt.scatter(X_manifold[:, 0], X_manifold[:, 1], c=y_ground_truth, s=2.0, alpha=0.6, cmap='Spectral')
+    #plt.show()

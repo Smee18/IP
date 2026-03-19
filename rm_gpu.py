@@ -180,9 +180,9 @@ def get_features_gpu_batched_loop(hdf5_dataset, filters_gpu, n_features, L, K, b
         
     return features
 
-M_input = 256
-J = 5 # Number of scales
-L = 8 # Number of angles
+M_input = 128
+J = 3 # Number of scales
+L = 12 # Number of angles
 K = 2 # Number of 1d scales
 
 
@@ -195,8 +195,8 @@ filters_set    = filter_bank(M_input, M_input, J, L=L) # Creates Morlet wavelets
 wavelets_1d    = get_1d_wavelets(L=L, K = K)           # Creates High pass filter
 phi_ang_filter = get_angular_phi(L)                    # Creates Low pass filter
 
-output_filename = r"maps/rigid_motion_embedding_gray.npz"
-data_path       = r'C:\IP_data\Galaxy10_ProcessedandCropped.h5'
+output_filename = r"maps/rigid_motion_embedding_gray_v4.npz"
+data_path       = r'data/Galaxy10_ProcessedandCroppedV4.h5'
 
 gpu_filters = prepare_gpu_filters(filters_set, wavelets_1d, phi_ang_filter)
 
