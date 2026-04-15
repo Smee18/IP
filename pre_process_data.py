@@ -6,7 +6,7 @@ from photutils.psf.matching import TukeyWindow
 from PIL import Image
 
 raw_path = 'data/Galaxy10_DECals.h5'
-processed_path = 'data/Galaxy10_ProcessedandCroppedV4.h5'
+processed_path = 'data/Galaxy10_ProcessedandCroppedFinal.h5'
 
 Q = 2
 alpha = 0.02
@@ -18,6 +18,7 @@ with h5py.File(raw_path, 'r') as F_raw, h5py.File(processed_path, 'w') as F_proc
     # Create dynamically resizable datasets to handle dropped NaN images
     dset_img = F_proc.create_dataset('images', shape=(0, 128, 128), maxshape=(None, 128, 128), dtype='float32', compression='gzip')
     dset_ans = F_proc.create_dataset('ans', shape=(0,), maxshape=(None,), dtype='uint8')
+    dset_idx = F_proc.create_dataset('original_indices', shape=(0,), maxshape=(None,), dtype='int32') 
 
     discarded = 0
 
@@ -31,10 +32,11 @@ with h5py.File(raw_path, 'r') as F_raw, h5py.File(processed_path, 'w') as F_proc
         
         valid_processed = []
         valid_ans = []
+        valid_idxs = []
         
         for i in range(end - start):
             z = batch_redshift[i]
-            
+            global_idx = start + i # Keep valid sample
             # The Data Gateway: Drop NaNs, negative, or zero redshifts instantly
             if np.isnan(z) or z < 0.001:
                 discarded += 1
@@ -87,17 +89,19 @@ with h5py.File(raw_path, 'r') as F_raw, h5py.File(processed_path, 'w') as F_proc
             
             valid_processed.append(final_image) ## CAREFUL THIS IS TAPERED
             valid_ans.append(batch_ans[i])
+            valid_idxs.append(global_idx)
             
-        # 6. Dynamic Disk Write
         if valid_processed:
             current_len = dset_img.shape[0]
             add_len = len(valid_processed)
             
             dset_img.resize(current_len + add_len, axis=0)
             dset_ans.resize(current_len + add_len, axis=0)
+            dset_idx.resize(current_len + add_len, axis=0) 
             
             dset_img[current_len:] = np.stack(valid_processed)
             dset_ans[current_len:] = np.array(valid_ans)
+            dset_idx[current_len:] = np.array(valid_idxs) 
 
 print(f"Removed {discarded} samples")
 print("Preprocessing complete. Invalid samples dropped. Output dataset aligned.")

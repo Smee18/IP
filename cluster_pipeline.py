@@ -210,8 +210,9 @@ def save_interactive_3d_umap(X_manifold, y_true, images, filename="umap_3d_explo
 def run_dash_explorer(X_manifold, y_true, images):
     app = dash.Dash(__name__)
 
+    local_indices = np.arange(len(y_true))
+
     # 1. Prepare Data
-    # We keep the indices to map back to the 'images' array accurately
     df = pd.DataFrame({
         'UMAP 1': X_manifold[:, 0],
         'UMAP 2': X_manifold[:, 1],
@@ -220,52 +221,59 @@ def run_dash_explorer(X_manifold, y_true, images):
         'point_index': np.arange(len(y_true)) 
     })
 
+    # Light Mode Figure
     fig = px.scatter_3d(
         df, x='UMAP 1', y='UMAP 2', z='UMAP 3',
         color='Class', 
-        opacity=0.7, 
-        template="plotly_dark", 
+        opacity=0.8, 
+        template="plotly_white", # Changed to white template
         height=800,
-        # custom_data allows us to pass the index to the click/hover event
         custom_data=['point_index', 'Class']
     )
     
-    # Clean up the 3D view: remove the messy text box following the cursor
     fig.update_traces(
-        marker=dict(size=3),
+        marker=dict(size=4, line=dict(width=1, color='DarkSlateGrey')),
         hoverinfo='none', 
         hovertemplate=None
     )
 
-    # 2. Layout with Flexbox for better alignment
+    # 2. Layout (Clean White Aesthetic)
     app.layout = html.Div([
+        # Left Panel: The Graph
         html.Div([
             dcc.Graph(id='3d-scatter', figure=fig, clear_on_unhover=False)
-        ], style={'width': '70%', 'display': 'inline-block'}),
+        ], style={'width': '70%', 'display': 'inline-block', 'padding': '10px'}),
         
+        # Right Panel: The Inspector
         html.Div([
-            html.H2("Galaxy Inspector", style={'color': 'white'}),
-            html.Hr(),
+            html.H2("Galaxy Morphology Inspector", 
+                    style={'color': '#2c3e50', 'fontFamily': 'serif', 'borderBottom': '2px solid #eee'}),
+            html.Br(),
             html.Div(id='image-container', children=[
-                html.P("Hover over a galaxy to inspect morphology", style={'color': '#888'})
+                html.P("Hover over a data point to inspect morphology", 
+                       style={'color': '#7f8c8d', 'fontStyle': 'italic'})
             ]),
             html.Div(id='class-label', style={
-                'fontSize': '24px', 
+                'fontSize': '22px', 
                 'fontWeight': 'bold', 
                 'marginTop': '20px',
-                'color': 'cyan'
-            })
+                'color': '#2980b9',
+                'fontFamily': 'serif'
+            }),
+            html.Hr(),
+            html.P("Dissertation Sample View", style={'fontSize': '12px', 'color': '#bdc3c7'})
         ], style={
-            'width': '28%', 
+            'width': '25%', 
             'display': 'inline-block', 
             'vertical-align': 'top', 
-            'padding': '20px', 
-            'backgroundColor': '#111',
-            'height': '100vh'
+            'padding': '30px', 
+            'backgroundColor': '#f9f9f9', # Soft light grey background
+            'height': '100vh',
+            'boxShadow': '-2px 0px 5px rgba(0,0,0,0.05)'
         })
-    ], style={'backgroundColor': '#111', 'display': 'flex'})
+    ], style={'backgroundColor': 'white', 'display': 'flex', 'fontFamily': 'Arial'})
 
-    # 3. Callback to update side panel
+    # 3. Callback
     @app.callback(
         [Output('image-container', 'children'),
          Output('class-label', 'children')],
@@ -273,23 +281,27 @@ def run_dash_explorer(X_manifold, y_true, images):
     )
     def display_hover_data(hoverData):
         if hoverData is None:
-            return html.Div("Hover over a point"), ""
+            return html.Div("No selection"), ""
         
         try:
-            # Extract the index we stored in custom_data
             point_idx = hoverData['points'][0]['customdata'][0]
             label = hoverData['points'][0]['customdata'][1]
             
-            # Convert the specific image on the fly
+            # Use the 'images' array (Pass the original color array here!)
             img_base64 = array_to_base64(images[point_idx])
             
             img_element = html.Img(
                 src=img_base64, 
-                style={'width': '100%', 'border': '2px solid white', 'borderRadius': '8px'}
+                style={
+                    'width': '100%', 
+                    'border': '1px solid #ddd', 
+                    'borderRadius': '4px',
+                    'boxShadow': '0px 4px 8px rgba(0,0,0,0.1)'
+                }
             )
-            return img_element, f"Class: {label}"
+            return img_element, f"Morphology: {label}"
         except Exception as e:
-            return html.Div(f"Error loading image: {e}"), ""
+            return html.Div(f"Error: {e}"), ""
 
     app.run(debug=True, use_reloader=False)
     
@@ -362,7 +374,8 @@ def plot_maps_dist(embds, J=3, L=12):
 
 if __name__ == "__main__":
 
-    data_path = 'data/Galaxy10_ProcessedandCroppedV4.h5'
+    data_path_pro = 'data/Galaxy10_ProcessedandCroppedFinal.h5'
+    data_path_real = 'data/Galaxy10_DECals.h5'
 
 
     loaded_embeddings, dim, scatter_bool = load_rigid_motion()
@@ -398,21 +411,36 @@ if __name__ == "__main__":
     class_names= ["Disturbed","Merging","Round Smooth","In-between Round Smooth","Cigar Shaped Smooth","Barred Spiral","Unbarred Tight Spiral","Unbarred Loose Spiral","Edge-on without Bulge","Edge-on with Bulge"]
     plot_confusion(confusion_matrix, class_names)
     '''
-    target_classes = [5,6]
-    with h5py.File(data_path, 'r') as F:
-        label_indices = np.array(F['ans']) # Copy to memory
-        mask = np.isin(label_indices, target_classes)
-        required_indices = np.where(mask)[0]
-        # Ensure this is a numpy array in memory, not a H5 dataset pointer
-        subset_images = np.array(F['images'][required_indices])
+    target_classes = [0,1,2,3,4,5,6,7,8,9]
 
-    y_ground_truth = label_indices[required_indices]
-    X_prepared = prepare_embedding(loaded_embeddings[required_indices], is_scattering=scatter_bool)
+    with h5py.File(data_path_pro, 'r') as F_pro:
+        label_indices = F_pro['ans'][:]
+
+        original_lookup = F_pro['original_indices'][:] 
+        
+        mask = np.isin(label_indices, target_classes)
+        subset_processed_indices = np.where(mask)[0]
+        
+        raw_color_indices = original_lookup[subset_processed_indices]
+        
+        y_ground_truth = label_indices[subset_processed_indices]
+
+    with h5py.File(data_path_real, 'r') as F_raw:
+
+        subset_real_images = np.array([F_raw['images'][idx] for idx in raw_color_indices])
+            
+    X_prepared = prepare_embedding(loaded_embeddings[subset_processed_indices], is_scattering=scatter_bool)
 
     pca = PCA(n_components=0.95)
     PCA_X = pca.fit_transform(X_prepared)
 
     # UMAP step
-    reducer = umap.UMAP(n_components=3, random_state=42, min_dist=0.1, n_neighbors=10, metric='cosine')
+    reducer = umap.UMAP(n_components=3, random_state=42, min_dist=0.1, n_neighbors=10, metric='correlation')
     X_manifold_3d = reducer.fit_transform(PCA_X)
-    run_dash_explorer(X_manifold_3d, y_ground_truth, subset_images)
+
+    for i in range(3):
+        idx_min = np.argmin(X_manifold_3d[:, i])
+        idx_max = np.argmax(X_manifold_3d[:, i])
+        print(f"Axis {i+1} Min: Index {idx_min}, Axis {i+1} Max: Index {idx_max}")
+    
+    run_dash_explorer(X_manifold_3d, y_ground_truth, subset_real_images)
