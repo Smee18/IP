@@ -22,7 +22,7 @@ import dash
 from dash import dcc, html, Input, Output
 
 J = 3
-L= 8
+L= 12
 
 
 def prepare_embedding(embeddings, is_scattering=False):
@@ -295,7 +295,7 @@ def run_dash_explorer(X_manifold, y_true, images):
     
 
 def load_cnn():
-    output_filename = r"maps/cnn_embedding_gray.npz"
+    output_filename = r"maps/cnn_embedding_gray_v4.npz"
     print("Loading saved features...")
     data = np.load(output_filename)
     cnn_embeddings = data['cnn_embeddings']
@@ -303,12 +303,13 @@ def load_cnn():
     return cnn_embeddings, dim, False
 
 def load_kymatio():
-    output_filename = r"maps/kymatio_embedding_gray.npz"
+    output_filename = r"maps/kymatio_embedding_gray_final.npz"
     print("Loading saved features...")
     data = np.load(output_filename)
     kymatio_embeddings = data['kymatio_embeddings']
-    dim = 112
-    return kymatio_embeddings, dim, True
+    print(np.shape(kymatio_embeddings))
+    dim = 469
+    return kymatio_embeddings, dim, False
 
 def load_rigid_motion():
     output_filename = r"maps/rigid_motion_embedding_gray_v4.npz"
@@ -317,6 +318,44 @@ def load_rigid_motion():
     rm_embeddings = data['rm_embeddings']
     dim = 112
     return rm_embeddings, dim, True
+
+def plot_maps_dist(embds, J=3, L=12):
+    # 1. Generate the two states of data
+    # Raw includes S0 and no log/layer-norm
+    X_basic = embds # Assuming this is (N, 469)
+    # Preprocessed includes log1p, S0 removal, and layer-wise StandardScaler
+    X_preprocessed = prepare_embedding(embds, is_scattering=True) # Result: (N, 468)
+
+    # 2. Extract representative slices for visualization
+    # We compare S0 (if exists), a sample of S1, and a sample of S2
+    s1_end = J * L + 1 # +1 because X_basic still has S0
+    
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6), sharey=False)
+    plt.rcParams.update({'font.family': 'serif', 'font.size': 12})
+
+    # --- Plot A: Basic Scaling (The 'Drowning' Effect) ---
+    sns.kdeplot(X_basic[:, 0], ax=axes[0], label='$S_0$ (Global Flux)', color='black', lw=2)
+    sns.kdeplot(X_basic[:, 1:37].flatten(), ax=axes[0], label='$S_1$ (Edges)', color='blue', alpha=0.6)
+    sns.kdeplot(X_basic[:, 37:].flatten(), ax=axes[0], label='$S_2$ (Texture)', color='red', alpha=0.4)
+    
+    axes[0].set_title(r"Standard $\log(1+x)$ Scaling (Dominant Nuisance Parameter)", fontsize=14)
+    axes[0].set_xlabel("Coefficient Magnitude")
+    axes[0].set_ylabel("Density")
+    axes[0].legend()
+
+    # --- Plot B: Proposed Structural Pipeline ---
+    # In X_preprocessed, S0 is gone. S1 and S2 are Z-scored.
+    sns.kdeplot(X_preprocessed[:, :36].flatten(), ax=axes[1], label='$S_1$ (Normalized)', color='blue', lw=2)
+    sns.kdeplot(X_preprocessed[:, 36:].flatten(), ax=axes[1], label='$S_2$ (Normalized)', color='red', lw=2)
+    
+    axes[1].set_title("Proposed Structural Pipeline\n(Layer-wise Decorrelation)", fontsize=14)
+    axes[1].set_xlabel("Z-Score (Standard Deviations)")
+    axes[1].set_ylabel("Density")
+    axes[1].legend()
+
+    plt.tight_layout()
+    plt.savefig('figures/distribution_comparison_kymatio.pdf', dpi=300)
+    plt.show()
 
 
 ### MAIN CODE ###
@@ -358,7 +397,6 @@ if __name__ == "__main__":
     
     class_names= ["Disturbed","Merging","Round Smooth","In-between Round Smooth","Cigar Shaped Smooth","Barred Spiral","Unbarred Tight Spiral","Unbarred Loose Spiral","Edge-on without Bulge","Edge-on with Bulge"]
     plot_confusion(confusion_matrix, class_names)
-
     '''
     target_classes = [5,6]
     with h5py.File(data_path, 'r') as F:
@@ -375,9 +413,6 @@ if __name__ == "__main__":
     PCA_X = pca.fit_transform(X_prepared)
 
     # UMAP step
-    reducer = umap.UMAP(n_components=3, random_state=42, min_dist=0.1, n_neighbors=50, metric='correlation')
+    reducer = umap.UMAP(n_components=3, random_state=42, min_dist=0.1, n_neighbors=10, metric='cosine')
     X_manifold_3d = reducer.fit_transform(PCA_X)
     run_dash_explorer(X_manifold_3d, y_ground_truth, subset_images)
-
-    #plt.scatter(X_manifold[:, 0], X_manifold[:, 1], c=y_ground_truth, s=2.0, alpha=0.6, cmap='Spectral')
-    #plt.show()
