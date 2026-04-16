@@ -375,7 +375,7 @@ def plot_maps_dist(embds, J=3, L=12):
 if __name__ == "__main__":
 
     data_path_pro = 'data/Galaxy10_ProcessedandCroppedFinal.h5'
-    data_path_real = 'data/Galaxy10_DECals.h5'
+    data_path_real = 'data/Galaxy10_FullColorInspector.h5'
 
 
     loaded_embeddings, dim, scatter_bool = load_rigid_motion()
@@ -425,9 +425,28 @@ if __name__ == "__main__":
         
         y_ground_truth = label_indices[subset_processed_indices]
 
-    with h5py.File(data_path_real, 'r') as F_raw:
+        if len(subset_processed_indices) > 2000:
+            rng = np.random.default_rng(42)
+            display_mask = rng.choice(len(subset_processed_indices), 2000, replace=False)
+        else:
+            display_mask = np.arange(len(subset_processed_indices))
 
-        subset_real_images = np.array([F_raw['images'][idx] for idx in raw_color_indices])
+        # Apply mask to all relevant arrays
+        subset_processed_indices = subset_processed_indices[display_mask]
+        raw_color_indices = raw_color_indices[display_mask]
+        y_ground_truth = y_ground_truth[display_mask]
+
+    with h5py.File(data_path_real, 'r') as F_raw:
+        print(f"Loading {len(raw_color_indices)} RGB images for inspector...")
+        
+        sort_idx = np.argsort(raw_color_indices)
+        reverse_idx = np.argsort(sort_idx)
+
+        sorted_images = F_raw['images'][raw_color_indices[sort_idx]]
+
+        subset_real_images = sorted_images[reverse_idx]
+
+    print("Generating Manifold")
             
     X_prepared = prepare_embedding(loaded_embeddings[subset_processed_indices], is_scattering=scatter_bool)
 
