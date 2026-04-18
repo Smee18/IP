@@ -52,6 +52,7 @@ pip install -r requirements.txt
 Repository Structure
 The codebase is organized into sequential stages of the analytical pipeline: Pre-processing, Embedding Extraction, and Topological Analysis.
 
+```
 .
 ├── .gitignore                  # Standard Git ignore file
 ├── requirements.txt            # Python dependencies (NumPy, SciPy, CuPy, UMAP, HDBSCAN, etc.)
@@ -74,5 +75,6 @@ The codebase is organized into sequential stages of the analytical pipeline: Pre
 │
 └── Manifold Analysis
     └── cluster_pipeline.py     # UMAP projection, HDBSCAN clustering, Silhouette sc
+```
 
 
