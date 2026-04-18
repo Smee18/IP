@@ -7,9 +7,9 @@ from scipy.fft import fft2
 # FIX 1: Use a power of 2 for image size.
 # J=3 means we downsample by 2^3 = 8. M must be divisible by 8.
 
-M = 256
-J = 5
-L = 8
+M = 128
+J = 3
+L = 12
 
 filters_set = filter_bank(M, M, J, L=L)
 
@@ -32,8 +32,8 @@ plt.rc('text', usetex=False)
 plt.rc('font', family='serif')
 
 fig, axs = plt.subplots(J, L, sharex=True, sharey=True)
-fig.set_figheight(6)
-fig.set_figwidth(6)
+fig.set_figheight(10)
+fig.set_figwidth(15)
 
 i = 0
 # Loop through the 'psi' (wavelet) filters
@@ -46,13 +46,12 @@ for filter in filters_set['psi']:
     ax = axs[i // L, i % L]
     ax.imshow(colorize(filter_c))
     ax.axis('off')
-    ax.set_title(f"j={i // L}, theta={i % L}", fontsize=8) # Simplified title
+    ax.set_title(fr"j={i // L}, $\theta$={i % L}", fontsize=14) # Simplified title
     i = i+1
-
-fig.suptitle("Wavelets (Psi) in Frequency Domain\n(Hue=Phase, Brightness=Magnitude)", fontsize=13)
 
 # FIX 3: Use plt.show() to ensure the window opens
 plt.tight_layout()
+plt.savefig('figures/wavelet_bank.pdf', bbox_inches='tight', dpi=300)
 plt.show()
 
 # --- Optional: Visualize the Low Pass Filter (Phi) ---

@@ -5,3 +5,4 @@ dop/
 maps/
 *.npz
 __pycache__/
+visualisations/

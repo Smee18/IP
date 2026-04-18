@@ -6,18 +6,21 @@ from photutils.psf.matching import TukeyWindow
 from PIL import Image
 
 raw_path = 'data/Galaxy10_DECals.h5'
-processed_path = 'data/Galaxy10_ProcessedandCropped.h5'
+processed_path = 'data/Galaxy10_ProcessedandCroppedFinal.h5'
 
-Q = 3.5
-alpha = 0.06
-taper_2d = TukeyWindow(alpha=0.5)((256, 256))
+Q = 2
+alpha = 0.02
+taper_2d = TukeyWindow(alpha=0.1)((256, 256))
 
 with h5py.File(raw_path, 'r') as F_raw, h5py.File(processed_path, 'w') as F_proc:
     n_images = F_raw['images'].shape[0]
     
     # Create dynamically resizable datasets to handle dropped NaN images
-    dset_img = F_proc.create_dataset('images', shape=(0, 256, 256), maxshape=(None, 256, 256), dtype='float32', compression='gzip')
+    dset_img = F_proc.create_dataset('images', shape=(0, 128, 128), maxshape=(None, 128, 128), dtype='float32', compression='gzip')
     dset_ans = F_proc.create_dataset('ans', shape=(0,), maxshape=(None,), dtype='uint8')
+    dset_idx = F_proc.create_dataset('original_indices', shape=(0,), maxshape=(None,), dtype='int32') 
+
+    discarded = 0
 
     batch_size = 500
     for start in tqdm(range(0, n_images, batch_size), desc="Extracting & Scaling Galaxies"):
@@ -29,17 +32,23 @@ with h5py.File(raw_path, 'r') as F_raw, h5py.File(processed_path, 'w') as F_proc
         
         valid_processed = []
         valid_ans = []
+        valid_idxs = []
         
         for i in range(end - start):
             z = batch_redshift[i]
-            
+            global_idx = start + i # Keep valid sample
             # The Data Gateway: Drop NaNs, negative, or zero redshifts instantly
-            if np.isnan(z) or z <= 0.0:
+            if np.isnan(z) or z < 0.001:
+                discarded += 1
                 continue
             
             # 1. Target Scale Calculation
             nz_int = int(7.35 / z)
             half_width = nz_int // 2
+
+            if nz_int < 64 or nz_int > 240:
+                discarded += 1
+                continue
             
             raw_flux = batch_raw[i, ..., 1].astype(np.float32) / 255.0
             
@@ -49,7 +58,7 @@ with h5py.File(raw_path, 'r') as F_raw, h5py.File(processed_path, 'w') as F_proc
             sky_std = np.nanstd(raw_flux[mask])
             
             clean_flux = np.maximum(raw_flux - sky_level, 0)
-            clean_flux[clean_flux < (2 * sky_std)] = 0 
+            #lean_flux[clean_flux < (2 * sky_std)] = 0 
 
             # 3. Clean Bounding Box Constraints
             x_min = max(0, 128 - half_width)
@@ -74,20 +83,25 @@ with h5py.File(raw_path, 'r') as F_raw, h5py.File(processed_path, 'w') as F_proc
             
             # 5. Taper and Stretch
             tapered = upscaled_image * taper_2d
-            final_image = np.arcsinh(alpha * Q * tapered) / Q
+            final_crop = tapered[64:192, 64:192]
+            final_crop = final_crop / (np.max(final_crop) + 1e-9)
+            final_image = np.arcsinh(alpha * Q *final_crop) / Q
             
-            valid_processed.append(final_image)
+            valid_processed.append(final_image) ## CAREFUL THIS IS TAPERED
             valid_ans.append(batch_ans[i])
+            valid_idxs.append(global_idx)
             
-        # 6. Dynamic Disk Write
         if valid_processed:
             current_len = dset_img.shape[0]
             add_len = len(valid_processed)
             
             dset_img.resize(current_len + add_len, axis=0)
             dset_ans.resize(current_len + add_len, axis=0)
+            dset_idx.resize(current_len + add_len, axis=0) 
             
             dset_img[current_len:] = np.stack(valid_processed)
             dset_ans[current_len:] = np.array(valid_ans)
+            dset_idx[current_len:] = np.array(valid_idxs) 
 
+print(f"Removed {discarded} samples")
 print("Preprocessing complete. Invalid samples dropped. Output dataset aligned.")
