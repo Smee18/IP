@@ -375,10 +375,10 @@ def plot_maps_dist(embds, J=3, L=12):
 if __name__ == "__main__":
 
     data_path_pro = 'data/Galaxy10_ProcessedandCroppedFinal.h5'
-    data_path_real = 'data/Galaxy10_FullColorInspector.h5'
+    data_path_real = 'data/Galaxy10_ColourProcessed.h5'
 
 
-    loaded_embeddings, dim, scatter_bool = load_rigid_motion()
+    loaded_embeddings, dim, scatter_bool = load_cnn()
     confusion_matrix = np.zeros((10, 10))
     num_classes = 10
     '''
@@ -411,55 +411,46 @@ if __name__ == "__main__":
     class_names= ["Disturbed","Merging","Round Smooth","In-between Round Smooth","Cigar Shaped Smooth","Barred Spiral","Unbarred Tight Spiral","Unbarred Loose Spiral","Edge-on without Bulge","Edge-on with Bulge"]
     plot_confusion(confusion_matrix, class_names)
     '''
-    target_classes = [0,1,2,3,4,5,6,7,8,9]
+    target_classes = [6, 8] # Adjust as needed
 
     with h5py.File(data_path_pro, 'r') as F_pro:
+        # 1. Load Labels and check size
         label_indices = F_pro['ans'][:]
+        print(f"Total Processed Data Size: {label_indices.shape[0]}")
 
-        original_lookup = F_pro['original_indices'][:] 
-        
+        # 2. Filter by target classes
         mask = np.isin(label_indices, target_classes)
-        subset_processed_indices = np.where(mask)[0]
-        
-        raw_color_indices = original_lookup[subset_processed_indices]
-        
-        y_ground_truth = label_indices[subset_processed_indices]
+        subset_indices = np.where(mask)[0]
+        y_ground_truth = label_indices[subset_indices]
 
-        if len(subset_processed_indices) > 2000:
+        # 3. Sub-sample for Dash memory limits
+        if len(subset_indices) > 5000:
             rng = np.random.default_rng(42)
-            display_mask = rng.choice(len(subset_processed_indices), 2000, replace=False)
-        else:
-            display_mask = np.arange(len(subset_processed_indices))
+            display_mask = rng.choice(len(subset_indices), 5000, replace=False)
+            # Apply mask
+            subset_indices = subset_indices[display_mask]
+            y_ground_truth = y_ground_truth[display_mask]
 
-        # Apply mask to all relevant arrays
-        subset_processed_indices = subset_processed_indices[display_mask]
-        raw_color_indices = raw_color_indices[display_mask]
-        y_ground_truth = y_ground_truth[display_mask]
-
-    with h5py.File(data_path_real, 'r') as F_raw:
-        print(f"Loading {len(raw_color_indices)} RGB images for inspector...")
+        print(f"Loading {len(subset_indices)} EXACT input tensors for visualization...")
         
-        sort_idx = np.argsort(raw_color_indices)
+        # 4. Fetch the exact images the network saw (requires sorted indices for HDF5)
+        sort_idx = np.argsort(subset_indices)
         reverse_idx = np.argsort(sort_idx)
+        
+        sorted_processed_images = F_pro['images'][subset_indices[sort_idx]]
+        subset_real_images = sorted_processed_images[reverse_idx]
 
-        sorted_images = F_raw['images'][raw_color_indices[sort_idx]]
+    print("Generating Manifold...")
+    
+    # Extract the corresponding embeddings
+    X_prepared = prepare_embedding(loaded_embeddings[subset_indices], is_scattering=scatter_bool)
 
-        subset_real_images = sorted_images[reverse_idx]
-
-    print("Generating Manifold")
-            
-    X_prepared = prepare_embedding(loaded_embeddings[subset_processed_indices], is_scattering=scatter_bool)
-
+    # PCA & UMAP
     pca = PCA(n_components=0.95)
     PCA_X = pca.fit_transform(X_prepared)
 
-    # UMAP step
-    reducer = umap.UMAP(n_components=3, random_state=42, min_dist=0.1, n_neighbors=10, metric='correlation')
+    reducer = umap.UMAP(n_components=3, random_state=42, min_dist=0.1, n_neighbors=50, metric='correlation')
     X_manifold_3d = reducer.fit_transform(PCA_X)
 
-    for i in range(3):
-        idx_min = np.argmin(X_manifold_3d[:, i])
-        idx_max = np.argmax(X_manifold_3d[:, i])
-        print(f"Axis {i+1} Min: Index {idx_min}, Axis {i+1} Max: Index {idx_max}")
-    
+    # Run the Explorer
     run_dash_explorer(X_manifold_3d, y_ground_truth, subset_real_images)
