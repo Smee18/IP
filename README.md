@@ -18,13 +18,8 @@ This pipeline is built to process the **[Galaxy10 DECals Dataset](https://astron
 It is highly recommended to run this pipeline within an isolated Python Virtual Environment to prevent dependency conflicts (especially regarding GPU-accelerated libraries like CuPy and TensorFlow).
 
 **1. Clone the repository:**
-```bash
-git clone [https://github.com/your-username/your-repo-name.git](https://github.com/your-username/your-repo-name.git)
-cd your-repo-name
-```
 
-
-2. Create and activate a virtual environment:
+**2. Create and activate a virtual environment:**
 
 On macOS and Linux:
 
@@ -40,7 +35,7 @@ python -m venv venv
 .\venv\Scripts\activate
 ```
 
-3. Install dependencies:
+**3. Install dependencies:**
 
 ```
 pip install --upgrade pip
@@ -49,7 +44,8 @@ pip install -r requirements.txt
 
 (Note: For GPU acceleration, ensure you have the correct CUDA toolkit installed for your system to support CuPy and TensorFlow/PyTorch).
 
-Repository Structure
+**Repository Structure**
+
 The codebase is organized into sequential stages of the analytical pipeline: Pre-processing, Embedding Extraction, and Topological Analysis.
 
 ```
