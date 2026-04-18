@@ -1,11 +1,10 @@
 # Mapping Morphological Signatures with Rotation-Invariant Scattering Networks
 
-This repository contains the official codebase for the Master's dissertation: **"Mapping Morphological Signatures: Using Rotation-Invariant Morlet Scattering Networks to Identify and Interpret Galaxies."** This project implements an unsupervised, $SE(2)$ rotation-invariant scattering network to extract geometrically stable morphological features from astronomical surveys. It evaluates the critical trade-off between explicit mathematical invariance (Rigid Motion) and learned invariance (ResNet50V2 CNNs), utilizing the Galaxy10 DECals dataset as a benchmark for the Hubble Flow continuum.
+This repository contains the official codebase for the Bsc dissertation: **"Mapping Morphological Signatures: Using Rotation-Invariant Morlet Scattering Networks to Identify and Interpret Galaxies."** This project implements an unsupervised, $SE(2)$ rotation-invariant scattering network to extract geometrically stable morphological features from astronomical surveys. It evaluates the critical trade-off between explicit mathematical invariance (Rigid Motion) and learned invariance (ResNet50V2 CNNs), utilizing the Galaxy10 DECals dataset as a benchmark for the Hubble Flow continuum.
 
 ### The Dataset: Galaxy10 DECals
 This pipeline is built to process the **[Galaxy10 DECals Dataset](https://astronn.readthedocs.io/en/latest/galaxy10.html)**, an astrophysical dataset containing 17,736 images across 10 broad morphological classes. 
 
-*(Note: Replace the image links below with local paths if you save the images to a `docs/` or `assets/` folder in your repo).*
 <p align="center">
   <img src="https://astronn.readthedocs.io/en/latest/_images/galaxy10_example.png" alt="Galaxy10 DECals Classes" width="800"/>
   <br>
