@@ -13,7 +13,7 @@ This pipeline is built to process the **[Galaxy10 DECals Dataset](https://astron
 
 ---
 
-## 🛠️ Installation & Setup
+## Installation & Setup
 
 It is highly recommended to run this pipeline within an isolated Python Virtual Environment to prevent dependency conflicts (especially regarding GPU-accelerated libraries like CuPy and TensorFlow).
 
@@ -52,7 +52,6 @@ pip install -r requirements.txt
 Repository Structure
 The codebase is organized into sequential stages of the analytical pipeline: Pre-processing, Embedding Extraction, and Topological Analysis.
 
-Plaintext
 .
 ├── .gitignore                  # Standard Git ignore file
 ├── requirements.txt            # Python dependencies (NumPy, SciPy, CuPy, UMAP, HDBSCAN, etc.)
@@ -75,3 +74,5 @@ Plaintext
 │
 └── Manifold Analysis
     └── cluster_pipeline.py     # UMAP projection, HDBSCAN clustering, Silhouette sc
+
+
